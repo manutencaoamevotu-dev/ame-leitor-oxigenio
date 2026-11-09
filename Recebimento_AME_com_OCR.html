@@ -1,0 +1,470 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;padding:18px;background:#f3f6fa;color:#243247;font-family:Arial,sans-serif}
+    .wrap{max-width:1000px;margin:auto}
+    header,.panel{background:white;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 2px 9px #0000000d}
+    header{background:#17365d;color:white}
+    h1{margin:0 0 6px;font-size:24px}
+    h2{font-size:18px;margin:0 0 14px}
+    .nav{margin-bottom:16px}
+    .nav a{display:inline-block;padding:10px 14px;background:#e5edf6;color:#17365d;border-radius:7px;text-decoration:none;font-weight:bold}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .field{margin-bottom:12px}
+    label{display:block;font-size:13px;font-weight:bold;margin-bottom:6px}
+    input,select,textarea{width:100%;padding:11px;border:1px solid #ccd5df;border-radius:7px;font-size:14px;background:white}
+    textarea{min-height:60px}
+    .item{border:1px solid #dce4ed;border-radius:9px;padding:14px;margin:12px 0;background:#fbfcfe}
+    .itemtitle{display:flex;justify-content:space-between;align-items:center;font-weight:bold;margin-bottom:12px;gap:10px}
+    .btn{border:0;border-radius:7px;padding:11px 15px;cursor:pointer;font-weight:bold;background:#e5edf6;color:#17365d;margin:4px}
+    .primary{background:#17365d;color:white}
+    .remove{background:#fbe9e9;color:#a12626}
+    .hint{font-size:12px;color:#66778a}
+    .status{display:none;padding:13px;border-radius:8px;margin:12px 0;white-space:pre-wrap}
+    .ok{display:block;background:#e4f5eb;color:#176b48}
+    .err{display:block;background:#fdeaea;color:#a12626}
+    .choice{display:flex;align-items:center;gap:14px;width:100%;padding:20px;text-align:left;background:white;border:1px solid #dce4ed;border-radius:10px;margin:12px 0;cursor:pointer;color:#243247}
+    .choice:hover{border-color:#17365d;background:#f8faff}
+    .choice-icon{font-size:28px}
+    .choice strong{display:block;font-size:16px;margin-bottom:5px}
+    .choice small{color:#66778a;font-size:13px}
+    .hidden{display:none!important}
+    @media(max-width:650px){
+      .grid{grid-template-columns:1fr}
+      body{padding:10px}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Recebimento e troca de cilindros</h1>
+    <div>AME — Oxigênio medicinal</div>
+  </header>
+
+  <div class="nav">
+    <a href="<?= webAppUrl ?>">← Painel principal</a>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <section id="menu" class="panel">
+    <h2>O que deseja registrar?</h2>
+    <p class="hint">Escolha uma opção para iniciar.</p>
+
+    <button class="choice" type="button" onclick="openForm('received')">
+      <span class="choice-icon">🟢</span>
+      <span>
+        <strong>Adicionar cilindros cheios recebidos</strong>
+        <small>Registrar os cilindros entregues pelo fornecedor.</small>
+      </span>
+    </button>
+
+    <button class="choice" type="button" onclick="openForm('collected')">
+      <span class="choice-icon">📦</span>
+      <span>
+        <strong>Adicionar cilindros vazios recolhidos</strong>
+        <small>Registrar os cilindros retirados pelo fornecedor.</small>
+      </span>
+    </button>
+  </section>
+
+  <div id="formArea" class="hidden">
+    <section class="panel">
+      <button class="btn" type="button" onclick="backToMenu()">← Voltar às opções</button>
+      <h2>Dados da operação</h2>
+
+      <div class="grid">
+        <div class="field">
+          <label>Empresa fornecedora *</label>
+          <input id="supplier">
+        </div>
+        <div class="field">
+          <label>Responsável *</label>
+          <select id="responsible"><option value="">Selecione o responsável</option></select>
+        </div>
+        <div class="field">
+          <label>Nota fiscal / romaneio</label>
+          <input id="document">
+        </div>
+        <div class="field">
+          <label>Destino dos cilindros recebidos *</label>
+          <select id="destination"><option value="">Selecione o setor de destino</option></select>
+        </div>
+      </div>
+
+      <label>Observações</label>
+      <textarea id="notes"></textarea>
+    </section>
+
+    <section id="receivedPanel" class="panel hidden">
+      <h2>Entrada — cilindros cheios</h2>
+      <p class="hint">Informe o número de série do fabricante. O código de barras é opcional.</p>
+      <div id="received"></div>
+      <button class="btn" type="button" onclick="addReceived()">+ Adicionar cilindro recebido</button>
+      <button class="btn" type="button" onclick="showOther('collected')">+ Adicionar também cilindros vazios recolhidos</button>
+    </section>
+
+    <section id="collectedPanel" class="panel hidden">
+      <h2>Saída — cilindros vazios recolhidos</h2>
+      <p class="hint">Somente cilindros flutuantes cadastrados como vazios/aguardando troca.</p>
+      <div id="collected"></div>
+      <button class="btn" type="button" onclick="addCollected()">+ Adicionar cilindro recolhido</button>
+      <button class="btn" type="button" onclick="showOther('received')">+ Adicionar também cilindros cheios recebidos</button>
+    </section>
+
+    <section class="panel">
+      <button id="save" class="btn primary" type="button" onclick="save()">Registrar recebimento e troca</button>
+    </section>
+  </div>
+</div>
+
+<script>
+let products = [];
+let sectors = [];
+let responsibles = [];
+let seq = 0;
+
+function esc(value) {
+  return String(value || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;',
+    '"':'&quot;', "'":'&#39;'
+  }[c]));
+}
+
+function status(message, type) {
+  const el = document.getElementById('status');
+  el.className = 'status ' + type;
+  el.textContent = message;
+  window.scrollTo(0, 0);
+}
+
+function v(id) {
+  return document.getElementById(id).value.trim();
+}
+
+function opts() {
+  return '<option value="">Selecione</option>' +
+    products.map(p =>
+      `<option value="${esc(p.code)}">${esc(p.description)} (${esc(p.code)})</option>`
+    ).join('');
+}
+
+function loadData() {
+  google.script.run
+    .withSuccessHandler(data => {
+      products = data.products || [];
+      sectors = data.sectors || [];
+      responsibles = data.responsibles || [
+        'Marcelo Antoniassi',
+        'Edgar Silva Martins de Souza',
+        'Fernando Luiz da Silva',
+        'Ronaldo Vieira'
+      ];
+
+      const destination = document.getElementById('destination');
+      destination.innerHTML = '<option value="">Selecione o setor de destino</option>' +
+        sectors.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
+
+      const responsible = document.getElementById('responsible');
+      responsible.innerHTML = '<option value="">Selecione o responsável</option>' +
+        responsibles.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
+    })
+    .withFailureHandler(error => {
+      status('Erro ao carregar produtos e setores: ' +
+        (error.message || error), 'err');
+    })
+    .OX3_getPageData();
+}
+
+function openForm(type) {
+  if (type !== 'received' && type !== 'collected') return;
+
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('formArea').classList.remove('hidden');
+
+  document.getElementById('receivedPanel').classList.toggle('hidden', type !== 'received');
+  document.getElementById('collectedPanel').classList.toggle('hidden', type !== 'collected');
+
+  if (type === 'received' && !document.querySelector('.received')) addReceived();
+  if (type === 'collected' && !document.querySelector('.collected')) addCollected();
+
+  document.getElementById('status').className = 'status';
+  window.scrollTo(0, 0);
+}
+
+window.openForm = openForm;
+
+function showOther(type) {
+  document.getElementById('receivedPanel').classList.toggle('hidden', type !== 'received');
+  document.getElementById('collectedPanel').classList.toggle('hidden', type !== 'collected');
+
+  if (type === 'received' && !document.querySelector('.received')) addReceived();
+  if (type === 'collected' && !document.querySelector('.collected')) addCollected();
+
+  window.scrollTo(0, 0);
+}
+
+function backToMenu() {
+  document.getElementById('formArea').classList.add('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+  document.getElementById('receivedPanel').classList.add('hidden');
+  document.getElementById('collectedPanel').classList.add('hidden');
+  window.scrollTo(0, 0);
+}
+
+function addReceived() {
+  const id = ++seq;
+  const d = document.createElement('div');
+  d.className = 'item received';
+  d.id = 'receivedItem' + id;
+
+  d.innerHTML = `
+    <div class="itemtitle">
+      Cilindro cheio recebido
+      <button class="btn remove" type="button" onclick="this.closest('.item').remove()">Remover</button>
+    </div>
+    <button class="btn primary" type="button" onclick="scanLabel('receivedItem${id}')">📷 Fotografar etiqueta inteira (OCR)</button>
+    <p class="hint">A leitura automática preencherá produto, lote e data. Confira os dados antes de registrar.</p>
+    <div class="grid">
+      <div class="field">
+        <label>Nº de série do fabricante *</label>
+        <input data-f="serial" placeholder="Número permanente do cilindro">
+      </div>
+      <div class="field">
+        <label>Código de barras da etiqueta</label>
+        <div style="display:flex;gap:5px">
+  <input id="bc${id}" data-f="barcode">
+  <button type="button" class="btn" onclick="scan('bc${id}')">📷 Ler</button>
+</div>
+      </div>
+      <div class="field">
+        <label>Número legível adicional</label>
+        <input data-f="displayNumber">
+      </div>
+      <div class="field">
+        <label>Produto *</label>
+        <select data-f="productCode">${opts()}</select>
+      </div>
+      <div class="field">
+        <label>Código de barras do produto/lote</label>
+        <input data-f="productBarcode">
+      </div>
+      <div class="field">
+        <label>Lote do oxigênio *</label>
+        <input data-f="lot">
+      </div>
+      <div class="field">
+        <label>Data indicada na etiqueta</label>
+        <input data-f="labelDate" placeholder="dd/mm/aaaa">
+      </div>
+    </div>
+    <label>Observações</label>
+    <input data-f="observations">
+  `;
+  document.getElementById('received').appendChild(d);
+}
+
+function addCollected() {
+  const id = ++seq;
+  const d = document.createElement('div');
+  d.className = 'item collected';
+
+  d.innerHTML = `
+    <div class="itemtitle">
+      Cilindro vazio recolhido
+      <button class="btn remove" type="button" onclick="this.closest('.item').remove()">Remover</button>
+    </div>
+    <div class="grid">
+      <div class="field">
+        <label>Nº de série do fabricante *</label>
+        <input data-f="serial">
+      </div>
+      <div class="field">
+        <label>Código de barras atual (opcional)</label>
+        <div style="display:flex;gap:5px">
+  <input id="co${id}" data-f="barcode">
+  <button type="button" class="btn" onclick="scan('co${id}')">📷 Ler</button>
+</div>
+      </div>
+    </div>
+    <label>Observações</label>
+    <input data-f="observations">
+  `;
+  document.getElementById('collected').appendChild(d);
+}
+
+function rows(selector) {
+  return [...document.querySelectorAll(selector)].map(el => {
+    const item = {};
+    el.querySelectorAll('[data-f]').forEach(input => {
+      item[input.dataset.f] = input.value.trim();
+    });
+    return item;
+  }).filter(item => Object.values(item).some(Boolean));
+}
+
+function save() {
+  const data = {
+    supplier: v('supplier'),
+    responsible: v('responsible'),
+    document: v('document'),
+    destination: v('destination'),
+    observations: v('notes'),
+    received: rows('.received'),
+    collected: rows('.collected')
+  };
+
+  if (!data.supplier || !data.responsible) {
+    status('Informe a empresa fornecedora e selecione o responsável.', 'err');
+    return;
+  }
+
+  if (data.received.length && !data.destination) {
+    status('Selecione o setor de destino dos cilindros recebidos.', 'err');
+    return;
+  }
+
+  if (!data.received.length && !data.collected.length) {
+    status('Adicione pelo menos um cilindro.', 'err');
+    return;
+  }
+
+  const button = document.getElementById('save');
+  button.disabled = true;
+  button.textContent = 'Registrando...';
+
+  google.script.run
+    .withSuccessHandler(result => {
+      button.disabled = false;
+      button.textContent = 'Registrar recebimento e troca';
+
+      status(
+        `Operação registrada. Protocolo: ${result.receiptId}\nCheios recebidos: ${result.received}\nVazios recolhidos: ${result.collected}`,
+        'ok'
+      );
+
+      ['supplier','responsible','document','destination','notes'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+
+      document.getElementById('received').innerHTML = '';
+      document.getElementById('collected').innerHTML = '';
+      backToMenu();
+    })
+    .withFailureHandler(error => {
+      button.disabled = false;
+      button.textContent = 'Registrar recebimento e troca';
+      status('Erro ao registrar: ' + (error.message || error), 'err');
+    })
+    .OX3_registerFloatingExchange(data);
+}
+// ==========================================
+// LEITOR EXTERNO DE CÓDIGO DE BARRAS — AME
+// ==========================================
+
+const LECTOR_URL = 'https://manutencaoamevotu-dev.github.io/ame-leitor-oxigenio/';
+
+function scan(id) {
+  const campo = document.getElementById(id);
+
+  if (!campo) {
+    status('Campo de leitura não encontrado.', 'err');
+    return;
+  }
+
+  const url = LECTOR_URL +
+    '?target=' + encodeURIComponent(id) +
+    '&returnOrigin=' + encodeURIComponent(window.location.origin);
+
+  const leitor = window.open(url, '_blank');
+
+  if (!leitor) {
+    status('Permita a abertura de janelas para utilizar a câmera.', 'err');
+  }
+}
+
+// ABRIR LEITOR OCR DA ETIQUETA INTEIRA
+function scanLabel(itemId) {
+  const item = document.getElementById(itemId);
+  if (!item) {
+    status('Cilindro não encontrado para leitura da etiqueta.', 'err');
+    return;
+  }
+  const url = LECTOR_URL + 'ocr.html?target=' + encodeURIComponent(itemId) +
+    '&returnOrigin=' + encodeURIComponent(window.location.origin);
+  const leitor = window.open(url, '_blank');
+  if (!leitor) status('Permita a abertura de janelas para fotografar a etiqueta.', 'err');
+}
+
+// RECEBER DADOS EXTRAÍDOS DA ETIQUETA PELO OCR
+window.addEventListener('message', function(event) {
+  if (event.origin !== 'https://manutencaoamevotu-dev.github.io') return;
+  const dados = event.data;
+  if (!dados || dados.type !== 'OX2_LABEL_OCR') return;
+  const item = document.getElementById(dados.target || '');
+  if (!item || !item.classList.contains('received')) {
+    status('Não foi possível localizar o cilindro correspondente.', 'err');
+    return;
+  }
+  const product = item.querySelector('[data-f="productCode"]');
+  const lot = item.querySelector('[data-f="lot"]');
+  const date = item.querySelector('[data-f="labelDate"]');
+  if (product && dados.productCode) {
+    const option = [...product.options].find(o => o.value === dados.productCode);
+    if (option) product.value = dados.productCode;
+  }
+  if (lot && dados.lot) lot.value = dados.lot;
+  if (date && dados.labelDate) date.value = dados.labelDate;
+  [product, lot, date].filter(Boolean).forEach(field => {
+    field.dispatchEvent(new Event('input', {bubbles:true}));
+    field.dispatchEvent(new Event('change', {bubbles:true}));
+  });
+  const parts = [];
+  if (dados.productCode) parts.push('produto ' + dados.productCode);
+  if (dados.lot) parts.push('lote ' + dados.lot);
+  if (dados.labelDate) parts.push('data ' + dados.labelDate);
+  status(parts.length ? 'Dados da etiqueta recebidos: ' + parts.join('; ') + '. Confira os campos.' : 'OCR recebido, mas nenhum campo foi identificado. Preencha manualmente.', parts.length ? 'ok' : 'err');
+});
+
+// RECEBER O CÓDIGO DO LEITOR EXTERNO
+window.addEventListener('message', function(event) {
+
+  if (event.origin !== 'https://manutencaoamevotu-dev.github.io') return;
+
+  const dados = event.data;
+
+  if (!dados || dados.type !== 'OX2_BARCODE_SCANNED') return;
+
+  const codigo = dados.value;
+  const idCampo = dados.target;
+
+  if (typeof codigo !== 'string') return;
+  if (!/^(bc|co)\d+$/.test(idCampo || '')) return;
+
+  const campo = document.getElementById(idCampo);
+
+  if (!campo) {
+    status('Campo de destino não encontrado.', 'err');
+    return;
+  }
+
+  campo.value = codigo;
+
+  campo.dispatchEvent(new Event('input', { bubbles: true }));
+  campo.dispatchEvent(new Event('change', { bubbles: true }));
+
+  campo.focus();
+
+  status('Código lido e preenchido automaticamente!', 'ok');
+});
+
+window.addEventListener('load', loadData);
+</script>
+</body>
+</html>
