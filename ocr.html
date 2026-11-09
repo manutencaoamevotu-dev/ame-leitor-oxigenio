@@ -1,126 +1,51 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#17365d">
-  <title>Leitura da etiqueta — AME</title>
-  <style>
-    *{box-sizing:border-box} body{margin:0;padding:14px;background:#f3f6fa;color:#243247;font-family:Arial,sans-serif}
-    main{max-width:680px;margin:auto;background:#fff;border-radius:14px;padding:18px;box-shadow:0 4px 18px #10284617}
-    header{background:#17365d;color:#fff;padding:16px;border-radius:10px;margin-bottom:14px} h1{font-size:21px;margin:0 0 5px} p{line-height:1.4}
-    video,img{width:100%;max-height:55vh;object-fit:contain;background:#111;border-radius:10px}
-    button{border:0;border-radius:8px;padding:13px 15px;font-weight:bold;font-size:15px;min-height:46px;cursor:pointer;margin:4px 2px}
-    .primary{background:#17365d;color:#fff}.secondary{background:#e8eef5;color:#17365d}.success{background:#177245;color:#fff}
-    .status{padding:11px;border-radius:8px;background:#e8f1fb;color:#194b7a;white-space:pre-wrap}.error{background:#fdeaea;color:#a12626}.ok{background:#e4f5eb;color:#176b48}
-    label{display:block;font-size:13px;font-weight:bold;margin:12px 0 5px} input,textarea{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px}
-    textarea{min-height:110px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.hidden{display:none!important}.hint{font-size:12px;color:#64748b}
-    @media(max-width:520px){.grid{grid-template-columns:1fr}}
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-</head>
-<body><main>
-  <header><h1>Leitura inteligente da etiqueta</h1><div>Controle de Oxigênio Medicinal — AME</div></header>
-  <p>Fotografe a etiqueta inteira do fornecedor. O OCR tentará identificar o código do produto, o lote e as datas impressas. Confira tudo antes de enviar.</p>
-  <div id="status" class="status">Toque em “Abrir câmera” para fotografar a etiqueta.</div>
-  <div class="actions">
-    <button id="cameraBtn" class="primary" type="button">📷 Abrir câmera</button>
-    <button id="fileBtn" class="secondary" type="button">Escolher foto</button>
-    <input id="photoInput" class="hidden" type="file" accept="image/*" capture="environment">
-  </div>
-  <video id="video" class="hidden" autoplay playsinline></video>
-  <div id="cameraActions" class="hidden"><button id="captureBtn" class="primary" type="button">Capturar etiqueta</button><button id="closeCameraBtn" class="secondary" type="button">Fechar câmera</button></div>
-  <img id="preview" class="hidden" alt="Prévia da etiqueta fotografada">
-  <canvas id="canvas" class="hidden"></canvas>
-  <div id="review" class="hidden">
-    <h3>Dados identificados — confira antes de enviar</h3>
-    <div class="grid">
-      <div><label for="productCode">Código do produto</label><input id="productCode" placeholder="Ex.: 2455/40000197"></div>
-      <div><label for="productName">Produto identificado</label><input id="productName" readonly></div>
-      <div><label for="lot">Lote</label><input id="lot" placeholder="Lote do oxigênio"></div>
-      <div><label for="labelDate">Data da etiqueta</label><input id="labelDate" placeholder="dd/mm/aaaa"></div>
-    </div>
-    <label for="rawText">Texto reconhecido na etiqueta (pode corrigir)</label>
-    <textarea id="rawText"></textarea>
-    <button id="sendBtn" class="success" type="button">Enviar dados ao recebimento</button>
-    <button id="retryBtn" class="secondary" type="button">Fotografar novamente</button>
-  </div>
-  <p class="hint">A imagem é processada no navegador. O formulário recebe somente os campos extraídos e confirmados; a foto não é gravada na planilha.</p>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#17365d">
+<title>Leitura automática da etiqueta — AME</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:12px;background:#f3f6fa;color:#243247;font-family:Arial,sans-serif}main{max-width:700px;margin:auto;background:#fff;border-radius:14px;padding:16px;box-shadow:0 4px 18px #10284617}header{background:#17365d;color:white;padding:16px;border-radius:10px;margin-bottom:14px}h1{font-size:21px;margin:0 0 5px}p{line-height:1.4}video,img{width:100%;max-height:55vh;object-fit:contain;background:#111;border-radius:10px}button{border:0;border-radius:8px;padding:13px 15px;font-weight:bold;font-size:15px;min-height:46px;cursor:pointer;margin:4px 2px}.primary{background:#17365d;color:white}.secondary{background:#e8eef5;color:#17365d}.success{background:#177245;color:white}.status{padding:11px;border-radius:8px;background:#e8f1fb;color:#194b7a;white-space:pre-wrap}.error{background:#fdeaea;color:#a12626}.ok{background:#e4f5eb;color:#176b48}label{display:block;font-size:13px;font-weight:bold;margin:12px 0 5px}input,textarea{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px}textarea{min-height:100px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.hidden{display:none!important}.hint{font-size:12px;color:#64748b}@media(max-width:520px){.grid{grid-template-columns:1fr}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head><body><main>
+<header><h1>Leitura automática da etiqueta</h1><div>Controle de Oxigênio Medicinal — AME</div></header>
+<p>Aponte a câmera para a etiqueta inteira. A leitura começa automaticamente. Confira os dados antes de enviar.</p>
+<div id="status" class="status">Preparando câmera...</div>
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas" class="hidden"></canvas>
+<img id="preview" class="hidden" alt="Etiqueta capturada">
+<div id="review" class="hidden">
+<h3>Dados identificados — confira antes de enviar</h3>
+<div class="grid">
+<div><label for="productCode">Código do produto</label><input id="productCode" placeholder="2455/40000197"></div>
+<div><label for="productName">Tipo do produto</label><input id="productName" readonly></div>
+<div><label for="lot">Lote do oxigênio</label><input id="lot"></div>
+<div><label for="labelDate">Data indicada na etiqueta</label><input id="labelDate" placeholder="dd/mm/aaaa"></div>
+<div><label for="labelBarcode">Código de barras da etiqueta</label><input id="labelBarcode"></div>
+</div>
+<label for="rawText">Texto reconhecido (pode corrigir)</label><textarea id="rawText"></textarea>
+<button id="sendBtn" class="success" type="button">Enviar dados ao recebimento</button>
+<button id="retryBtn" class="secondary" type="button">Ler novamente</button>
+</div>
+<p class="hint">O número de série do fabricante é um identificador diferente e não será preenchido com o lote nem com o código de barras da etiqueta.</p>
 </main>
 <script>
-(function(){
- 'use strict';
- const params=new URLSearchParams(location.search);
- const target=params.get('target')||'';
- const returnOrigin=params.get('returnOrigin')||'';
- const $=id=>document.getElementById(id);
- let stream=null;
- const productMap={
-  '2455/40000197':{name:'T — 10 m³'},
-  '2455/40000563':{name:'G — capacidade a confirmar'},
-  '2455/40000618':{name:'WhiteMed — capacidade a confirmar'},
-  '2455/40004045':{name:'PP — 2 m³'},
-  '2455/40004033':{name:'PP — 1 m³'}
- };
- function status(msg,kind){$('status').textContent=msg;$('status').className='status '+(kind||'');}
- function cleanCode(s){return String(s||'').replace(/[^0-9]/g,'');}
- function findProduct(text){
-  const digits=cleanCode(text);
-  for(const code of Object.keys(productMap)) if(digits.includes(cleanCode(code))) return code;
-  return '';
- }
- function extractLot(text){
-  const patterns=[/(?:LOTE|LOT|BATCH)\s*[:#º.-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/i,/(?:N[ÚU]M(?:ERO)?\s*DO\s*LOTE)\s*[:#.-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/i];
-  for(const re of patterns){const m=text.match(re);if(m)return m[1].replace(/[.,;:]$/,'');}
-  return '';
- }
- function extractDate(text){
-  const m=text.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})\b/);
-  return m?m[1].replace(/[.-]/g,'/'):'';
- }
- function updateProductName(){const code=$('productCode').value.trim();$('productName').value=productMap[code]?.name|| (code?'Código não consta na tabela — conferir':'');}
- async function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;} $('video').classList.add('hidden');$('cameraActions').classList.add('hidden');}
- async function openCamera(){
-  try{if(!navigator.mediaDevices?.getUserMedia)throw new Error('Câmera não disponível neste navegador.');
-   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
-   $('video').srcObject=stream;$('video').classList.remove('hidden');$('cameraActions').classList.remove('hidden');$('preview').classList.add('hidden');
-   await $('video').play();status('Câmera aberta. Enquadre a etiqueta inteira e toque em Capturar etiqueta.','ok');
-  }catch(e){status('Não foi possível abrir a câmera: '+e.message,'error');}
- }
- async function processImage(file){
-  if(!file)return; await stopCamera();
-  const url=URL.createObjectURL(file);$('preview').src=url;$('preview').classList.remove('hidden');$('review').classList.add('hidden');
-  status('Lendo a etiqueta com OCR. Aguarde; pode levar alguns segundos...');
-  try{
-   if(!window.Tesseract)throw new Error('Biblioteca OCR não carregou. Verifique a internet e tente novamente.');
-   const result=await Tesseract.recognize(file,'por+eng',{logger:m=>{if(m.status==='recognizing text')status('Reconhecendo texto: '+Math.round((m.progress||0)*100)+'%');}});
-   const text=result.data.text||'';
-   $('rawText').value=text;
-   const code=findProduct(text);$('productCode').value=code;updateProductName();
-   $('lot').value=extractLot(text);$('labelDate').value=extractDate(text);
-   $('review').classList.remove('hidden');
-   const found=[code?'código do produto':'', $('lot').value?'lote':'', $('labelDate').value?'data':''].filter(Boolean);
-   status(found.length?'Leitura concluída. Identificado: '+found.join(', ')+'. Confira e corrija os campos.':'Texto reconhecido, mas não foi possível identificar automaticamente os campos. Confira o texto e preencha manualmente.','ok');
-  }catch(e){status('Falha no OCR: '+e.message,'error');}
- }
- $('cameraBtn').addEventListener('click',openCamera);
- $('fileBtn').addEventListener('click',()=>$('photoInput').click());
- $('photoInput').addEventListener('change',e=>processImage(e.target.files[0]));
- $('captureBtn').addEventListener('click',()=>{
-  const v=$('video'),c=$('canvas');if(!v.videoWidth){status('A câmera ainda não está pronta.','error');return;}
-  c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);
-  c.toBlob(blob=>{if(blob)processImage(new File([blob],'etiqueta.jpg',{type:'image/jpeg'}));},'image/jpeg',0.92);
- });
- $('closeCameraBtn').addEventListener('click',stopCamera);
- $('productCode').addEventListener('input',updateProductName);
- $('retryBtn').addEventListener('click',()=>{$('review').classList.add('hidden');$('photoInput').value='';openCamera();});
- $('sendBtn').addEventListener('click',()=>{
-  const origin=(()=>{try{const u=new URL(returnOrigin);return u.protocol==='https:'?u.origin:'';}catch(e){return '';}})();
-  if(!origin||!window.opener||window.opener.closed){status('A aba do recebimento não foi localizada. Feche esta tela e abra a leitura novamente pelo formulário.','error');return;}
-  const payload={type:'OX2_LABEL_OCR',target,productCode:$('productCode').value.trim(),lot:$('lot').value.trim(),labelDate:$('labelDate').value.trim(),rawText:$('rawText').value};
-  window.opener.postMessage(payload,origin);status('Dados enviados ao recebimento. Volte à aba anterior e confira os campos.','ok');
- });
- window.addEventListener('pagehide',stopCamera);
- if(!target)status('Abra esta tela pelo botão de fotografar etiqueta no recebimento.');
+(()=>{'use strict';
+const $=id=>document.getElementById(id),params=new URLSearchParams(location.search),target=params.get('target')||'',returnOrigin=params.get('returnOrigin')||'';
+const products={'2455/40000197':'T — 10 m³','2455/40000563':'G — capacidade a confirmar','2455/40000618':'WhiteMed — capacidade a confirmar','2455/40004045':'PP — 2 m³','2455/40004033':'PP — 1 m³'};
+let stream=null,worker=null,working=false,done=false,barcodeDetector=null,lastBarcode='',attempts=0,lastRead={};
+function say(t,k=''){ $('status').textContent=t;$('status').className='status '+k; }
+function normalize(s){return String(s||'').replace(/\s/g,'').replace(/[^0-9]/g,'');}
+function productCode(text){const n=normalize(text);for(const c of Object.keys(products))if(n.includes(normalize(c)))return c;return '';}
+function getLot(text){const lines=String(text||'').split(/\n/).map(s=>s.trim()).filter(Boolean);for(let i=0;i<lines.length;i++){if(/\bLOTE\b|\bLOT\b|\bBATCH\b/i.test(lines[i])){let same=lines[i].replace(/^.*?\b(?:LOTE|LOT|BATCH)\b\s*[:#º.-]?/i,'').trim();if(same && /[0-9A-Z]{5,}/i.test(same))return same.match(/[A-Z0-9][A-Z0-9./_-]{4,}/i)?.[0]||same;for(let j=i+1;j<Math.min(i+3,lines.length);j++){let m=lines[j].match(/[A-Z0-9][A-Z0-9./_-]{4,}/i);if(m)return m[0];}}}return '';}
+function getDate(text){const m=String(text||'').match(/\b(\d{1,2}[\/. -]\d{1,2}[\/. -]\d{2,4}|\d{4}-\d{2}-\d{2})\b/);return m?m[1].replace(/[. -]/g,'/'):'';}
+async function start(){try{if(!target)throw Error('Abra esta página pelo botão do recebimento.');if(!navigator.mediaDevices?.getUserMedia)throw Error('Este navegador não disponibiliza a câmera.');stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});$('video').srcObject=stream;await $('video').play();if('BarcodeDetector'in window){try{barcodeDetector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','itf','qr_code','codabar','upc_a','upc_e']});}catch(e){barcodeDetector=null;}}say('Câmera ativa. Mantenha a etiqueta inteira enquadrada. A leitura será automática.','ok');setTimeout(readFrame,1200);}catch(e){say('Não foi possível iniciar a câmera: '+e.message,'error');}}
+async function readFrame(){if(done||working||!stream)return;const v=$('video');if(!v.videoWidth){setTimeout(readFrame,500);return;}working=true;const c=$('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);let decoded='';if(barcodeDetector){try{const hits=await barcodeDetector.detect(c);if(hits.length){decoded=hits[0].rawValue||'';lastBarcode=decoded;}}catch(e){}}
+say('Lendo a etiqueta automaticamente... mantenha a câmera firme.');attempts++;try{if(!worker){worker=await Tesseract.createWorker('por+eng',1,{logger:m=>{if(m.status==='recognizing text')say('Reconhecendo etiqueta: '+Math.round((m.progress||0)*100)+'%');}});}const result=await worker.recognize(c);const text=result.data.text||'';const code=productCode(text);const lot=getLot(text);const date=getDate(text);lastRead={text,code,lot,date,decoded};if((code&&lot)||(attempts>=4&&(code||lot||date||decoded))){done=true;await stop();$('preview').src=c.toDataURL('image/jpeg',.9);$('preview').classList.remove('hidden');$('productCode').value=code;$('productName').value=products[code]||'';$('lot').value=lot;$('labelDate').value=date;$('labelBarcode').value=decoded||lot;$('rawText').value=text;$('review').classList.remove('hidden');say('Leitura concluída. Confira os campos: o código de barras pode precisar de conferência.','ok');return;}}catch(e){say('Erro durante a leitura: '+e.message,'error');}working=false;setTimeout(readFrame,900);}
+async function stop(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}if(worker){try{await worker.terminate();}catch(e){}worker=null;}}
+$('productCode').addEventListener('input',()=>{$('productName').value=products[$('productCode').value.trim()]||'Código não consta na tabela';});
+$('sendBtn').addEventListener('click',()=>{let origin='';try{const u=new URL(returnOrigin);if(u.protocol==='https:')origin=u.origin;}catch(e){}if(!origin||!window.opener||window.opener.closed){say('Não localizei a tela de recebimento. Feche esta janela e abra o OCR pelo formulário.','error');return;}const payload={type:'OX2_LABEL_OCR',target,productCode:$('productCode').value.trim(),lot:$('lot').value.trim(),labelDate:$('labelDate').value.trim(),productBarcode:$('labelBarcode').value.trim(),barcode:'',rawText:$('rawText').value};window.opener.postMessage(payload,origin);say('Enviando dados ao recebimento... aguarde a confirmação.');$('sendBtn').disabled=true;});
+window.addEventListener('message',e=>{if(e.data?.type==='OX2_LABEL_OCR_ACK'&&e.data.target===target){say(e.data.success?'Recebimento confirmou os dados. Volte à tela anterior e confira.':(e.data.message||'O recebimento não confirmou os dados.'),e.data.success?'ok':'error');$('sendBtn').disabled=false;}});
+$('retryBtn').addEventListener('click',async()=>{done=false;attempts=0;lastRead={};$('review').classList.add('hidden');$('preview').classList.add('hidden');await start();});window.addEventListener('pagehide',stop);start();
 })();
 </script></body></html>
