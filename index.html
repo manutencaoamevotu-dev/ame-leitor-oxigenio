@@ -56,6 +56,7 @@
       border-radius: 8px;
       background: #eef2f7;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     .ok {
@@ -173,11 +174,12 @@
         type: 'AME_BARCODE_RESULT',
         targetId: targetId,
         code: code
-      }, '*');
+      }, 'https://script.google.com');
 
       message('Código enviado ao formulário do AME!', 'ok');
 
       setTimeout(() => window.close(), 1200);
+
     } else {
       message(
         'Código lido: ' + code +
