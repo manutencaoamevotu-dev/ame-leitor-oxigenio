@@ -1,0 +1,202 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AME — Leitor de Cilindros</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 18px;
+      background: #f3f6fa;
+      color: #243247;
+      font-family: Arial, sans-serif;
+    }
+
+    .box {
+      max-width: 520px;
+      margin: 25px auto;
+      padding: 22px;
+      background: white;
+      border-radius: 14px;
+      box-shadow: 0 3px 14px #0001;
+    }
+
+    h2 { color: #17365d; }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 8px;
+      background: #17365d;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: .5; }
+
+    #reader {
+      width: 100%;
+      margin-top: 18px;
+    }
+
+    #status {
+      margin-top: 15px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #eef2f7;
+      white-space: pre-wrap;
+    }
+
+    .ok {
+      background: #e4f5eb !important;
+      color: #176b48;
+    }
+
+    .err {
+      background: #fdeaea !important;
+      color: #a12626;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="box">
+    <h2>Leitor de códigos — AME</h2>
+
+    <p>
+      Aponte a câmera para o QR Code ou código de barras
+      do cilindro.
+    </p>
+
+    <button id="start" onclick="startScanner()">
+      Abrir câmera
+    </button>
+
+    <div id="reader"></div>
+
+    <div id="status">
+      Aguardando início da leitura.
+    </div>
+
+    <button id="close" onclick="closeScanner()">
+      Fechar leitor
+    </button>
+  </div>
+
+<script>
+  let scanner = null;
+  let scanning = false;
+
+  const params = new URLSearchParams(location.search);
+  const targetId = params.get('target') || '';
+
+  const formatos = [
+    Html5QrcodeSupportedFormats.QR_CODE,
+    Html5QrcodeSupportedFormats.CODE_128,
+    Html5QrcodeSupportedFormats.CODE_39,
+    Html5QrcodeSupportedFormats.EAN_13,
+    Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.UPC_A,
+    Html5QrcodeSupportedFormats.UPC_E,
+    Html5QrcodeSupportedFormats.ITF,
+    Html5QrcodeSupportedFormats.CODABAR
+  ];
+
+  function message(text, type = '') {
+    const el = document.getElementById('status');
+    el.textContent = text;
+    el.className = type;
+  }
+
+  async function startScanner() {
+    try {
+      if (!window.Html5Qrcode) {
+        throw new Error('Biblioteca de leitura não carregada.');
+      }
+
+      document.getElementById('start').disabled = true;
+
+      scanner = new Html5Qrcode('reader', {
+        formatsToSupport: formatos,
+        verbose: false
+      });
+
+      message('Solicitando acesso à câmera...');
+
+      await scanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 10,
+          qrbox: { width: 260, height: 160 },
+          aspectRatio: 1.0
+        },
+        code => {
+          if (!scanning) {
+            scanning = true;
+            message('Código identificado: ' + code, 'ok');
+
+            scanner.stop().then(() => {
+              returnCode(code);
+            }).catch(() => {
+              returnCode(code);
+            });
+          }
+        },
+        () => {}
+      );
+
+      message('Câmera aberta. Aponte para o código.');
+
+    } catch (e) {
+      document.getElementById('start').disabled = false;
+      message(
+        'Não foi possível abrir a câmera: ' + e.message,
+        'err'
+      );
+    }
+  }
+
+  function returnCode(code) {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({
+        type: 'AME_BARCODE_RESULT',
+        targetId: targetId,
+        code: code
+      }, '*');
+
+      message('Código enviado ao formulário do AME!', 'ok');
+
+      setTimeout(() => window.close(), 1200);
+    } else {
+      message(
+        'Código lido: ' + code +
+        '\nNão foi possível localizar o formulário de origem.',
+        'err'
+      );
+    }
+  }
+
+  async function closeScanner() {
+    if (scanner && scanner.isScanning) {
+      try {
+        await scanner.stop();
+      } catch (e) {}
+    }
+
+    scanning = true;
+    window.close();
+  }
+</script>
+</body>
+</html>
