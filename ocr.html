@@ -1,10 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#17365d">
-<title>Leitura automática das etiquetas — AME</title>
+<title>Leitura das etiquetas — AME</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;padding:12px;background:#f3f6fa;color:#243247;font-family:Arial,sans-serif}
@@ -12,307 +13,360 @@ main{max-width:700px;margin:auto;background:#fff;border-radius:14px;padding:16px
 header{background:#17365d;color:white;padding:16px;border-radius:10px;margin-bottom:14px}
 h1{font-size:21px;margin:0 0 5px}
 p{line-height:1.4}
-video{width:100%;max-height:58vh;object-fit:contain;background:#111;border-radius:10px}
-button{border:0;border-radius:8px;padding:13px 15px;font-weight:bold;font-size:15px;min-height:46px;cursor:pointer;margin:8px 2px 2px}
+video{width:100%;max-height:48vh;object-fit:contain;background:#111;border-radius:10px}
+button{border:0;border-radius:8px;padding:13px 15px;font-weight:bold;font-size:15px;min-height:46px;cursor:pointer;margin:5px 2px}
+.primary{background:#17365d;color:white}
 .secondary{background:#e8eef5;color:#17365d}
-.status{padding:11px;border-radius:8px;background:#e8f1fb;color:#194b7a;white-space:pre-wrap}
+.status{padding:11px;border-radius:8px;background:#e8f1fb;color:#194b7a;white-space:pre-wrap;margin:12px 0}
 .error{background:#fdeaea;color:#a12626}
 .ok{background:#e4f5eb;color:#176b48}
+.step{border:1px solid #dce4ed;border-radius:10px;padding:12px;margin:12px 0}
+.step h2{font-size:17px;margin:0 0 8px}
+.result{font-size:14px;color:#475569;white-space:pre-wrap}
+.muted{color:#64748b;font-size:13px}
 .hidden{display:none!important}
-.hint{font-size:12px;color:#64748b}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <main>
-  <header>
-    <h1>Leitura automática das etiquetas</h1>
-    <div>Controle de Oxigênio Medicinal — AME</div>
-  </header>
-  <p id="instruction">Preparando a câmera...</p>
-  <div id="status" class="status">Iniciando câmera...</div>
-  <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas" class="hidden"></canvas>
-  <button id="skipCylinder" class="secondary hidden" type="button">Continuar sem identificação individual</button>
-  <p class="hint">A leitura é feita no aparelho e a imagem não é armazenada. O número legível da etiqueta individual não é tratado como número de série do fabricante.</p>
+<header>
+<h1>Leitura automática das etiquetas</h1>
+<div>Controle de Oxigênio Medicinal — AME</div>
+</header>
+
+<p>As etiquetas podem estar em qualquer posição. Faça uma captura da etiqueta do fornecedor/produto e depois uma captura da identificação individual do cilindro. O sistema combina as duas leituras automaticamente.</p>
+
+<div id="status" class="status">Preparando câmera...</div>
+<video id="video" autoplay playsinline muted></video>
+
+<div class="step" id="productStep">
+<h2>1 — Etiqueta do fornecedor / produto</h2>
+<div id="productResult" class="result">Aguardando captura.</div>
+<button id="captureProduct" class="primary" type="button">📷 Capturar etiqueta do produto</button>
+<button id="retryProduct" class="secondary hidden" type="button">Ler esta etiqueta novamente</button>
+</div>
+
+<div class="step" id="cylinderStep">
+<h2>2 — Etiqueta individual do cilindro</h2>
+<div id="cylinderResult" class="result">Aguardando a primeira etiqueta.</div>
+<button id="captureCylinder" class="primary hidden" type="button">📷 Capturar identificação individual</button>
+<button id="retryCylinder" class="secondary hidden" type="button">Ler esta etiqueta novamente</button>
+</div>
+
+<div id="finalStatus" class="status hidden"></div>
+
+<p class="muted">O número de série do fabricante permanece separado. O código de barras só será preenchido quando o leitor conseguir decodificá-lo; ele nunca será substituído pelo lote.</p>
 </main>
+
 <script>
-(() => {
-  'use strict';
-  const $ = id => document.getElementById(id);
-  const params = new URLSearchParams(location.search);
-  const target = params.get('target') || '';
-  const returnOrigin = params.get('returnOrigin') || '';
-  const productCodes = [
-    '2455/40000197',
-    '2455/40000563',
-    '2455/40000618',
-    '2455/40004045',
-    '2455/40004033'
-  ];
+(()=>{'use strict';
 
-  let stream = null;
-  let worker = null;
-  let detector = null;
-  let running = false;
-  let busy = false;
-  let stage = 'product';
-  let attempts = 0;
-  let stableKey = '';
-  let stableCount = 0;
-  let resultData = {
-    productCode: '', lot: '', labelDate: '', productBarcode: '',
-    cylinderBarcode: '', cylinderNumber: '', rawText: ''
-  };
-  let lastRawText = '';
+const $=id=>document.getElementById(id);
+const params=new URLSearchParams(location.search);
+const target=params.get('target')||'';
+const returnOrigin=params.get('returnOrigin')||'';
 
-  function say(message, kind = '') {
-    $('status').textContent = message;
-    $('status').className = 'status ' + kind;
-  }
+const products={
+'2455/40000197':'T — 10 m³',
+'2455/40000563':'G — capacidade a confirmar',
+'2455/40000618':'WhiteMed — capacidade a confirmar',
+'2455/40004045':'PP — 2 m³',
+'2455/40004033':'PP — 1 m³'
+};
 
-  function normalizeDigits(value) {
-    return String(value || '').replace(/\D/g, '');
-  }
+let stream=null;
+let worker=null;
+let detector=null;
+let working=false;
+let productData=null;
+let cylinderData=null;
 
-  function findProductCode(text) {
-    const digits = normalizeDigits(text);
-    return productCodes.find(code => digits.includes(normalizeDigits(code))) || '';
-  }
+function say(message,type=''){
+$('status').textContent=message;
+$('status').className='status '+type;
+}
 
-  function findLot(text) {
-    const lines = String(text || '').split(/\n/).map(s => s.trim()).filter(Boolean);
-    for (let i = 0; i < lines.length; i++) {
-      if (/\bLOTE\b|\bLOT\b|\bBATCH\b/i.test(lines[i])) {
-        const sameLine = lines[i].replace(/^.*?\b(?:LOTE|LOT|BATCH)\b\s*[:#º.-]?/i, '').trim();
-        const sameMatch = sameLine.match(/[A-Z0-9][A-Z0-9./_-]{4,}/i);
-        if (sameMatch) return sameMatch[0];
-        for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
-          const match = lines[j].match(/[A-Z0-9][A-Z0-9./_-]{4,}/i);
-          if (match) return match[0];
-        }
-      }
-    }
-    return '';
-  }
+function digits(s){
+return String(s||'').replace(/\D/g,'');
+}
 
-  function findDate(text) {
-    const match = String(text || '').match(/\b(\d{1,2}[/. -]\d{1,2}[/. -]\d{2,4}|\d{4}-\d{2}-\d{2})\b/);
-    return match ? match[1].replace(/[. -]/g, '/') : '';
-  }
+function parseProductCode(text){
+const all=digits(text);
+for(const code of Object.keys(products)){
+if(all.includes(digits(code)))return code;
+}
+return '';
+}
 
-  function findCylinderNumber(text) {
-    const lines = String(text || '').split(/\n/).map(s => s.trim()).filter(Boolean);
-    for (const line of lines) {
-      const digits = normalizeDigits(line);
-      // Número legível da etiqueta individual: não usa o código do produto.
-      if (digits.length >= 7 && digits.length <= 12 &&
-          !productCodes.some(code => normalizeDigits(code) === digits)) {
-        return digits;
-      }
-    }
-    return '';
-  }
+function parseLot(text){
+const lines=String(text||'').split(/\n/).map(x=>x.trim()).filter(Boolean);
 
-  function updateStage(next) {
-    stage = next;
-    attempts = 0;
-    stableKey = '';
-    stableCount = 0;
-    $('skipCylinder').classList.toggle('hidden', next !== 'cylinder');
-    if (next === 'product') {
-      $('instruction').textContent = 'Etapa 1 de 2 — aponte para a etiqueta do produto e do lote.';
-      say('Lendo código do produto, lote, data indicada e código de barras do produto...');
-    } else {
-      $('instruction').textContent = 'Etapa 2 de 2 — agora aponte para a etiqueta individual do cilindro.';
-      say('Lendo a identificação individual legível e o código de barras próprio do cilindro...');
-    }
-  }
+for(let i=0;i<lines.length;i++){
+if(/\bLOTE\b|\bLOT\b|\bBATCH\b/i.test(lines[i])){
+const same=lines[i].replace(/^.*?\b(?:LOTE|LOT|BATCH)\b\s*[:#º.-]?/i,'');
+let m=same.match(/[0-9]{6,14}/);
+if(m)return m[0];
 
-  function stable(value) {
-    if (!value) return false;
-    if (value === stableKey) stableCount++;
-    else { stableKey = value; stableCount = 1; }
-    return stableCount >= 2;
-  }
+for(let j=i+1;j<Math.min(i+3,lines.length);j++){
+m=lines[j].match(/[0-9]{6,14}/);
+if(m)return m[0];
+}
+}
+}
+return '';
+}
 
-  async function getWorker() {
-    if (!worker) {
-      if (!window.Tesseract) throw new Error('A biblioteca de leitura não carregou. Verifique a conexão com a internet.');
-      worker = await Tesseract.createWorker('por+eng', 1, {
-        logger: message => {
-          if (message.status === 'recognizing text') {
-            say('Reconhecendo etiqueta: ' + Math.round((message.progress || 0) * 100) + '%');
-          }
-        }
-      });
-    }
-    return worker;
-  }
+function parseDate(text){
+const m=String(text||'').match(/\b(\d{1,2}[\/. -]\d{1,2}[\/. -]\d{4}|\d{4}-\d{2}-\d{2})\b/);
+if(!m)return '';
 
-  async function detectBarcode(canvas) {
-    if (!detector) return '';
-    try {
-      const found = await detector.detect(canvas);
-      return found && found.length ? String(found[0].rawValue || '').trim() : '';
-    } catch (e) {
-      return '';
-    }
-  }
+const p=m[1].replace(/[. -]/g,'/').split('/');
 
-  async function readLoop() {
-    if (!running || busy || !stream) return;
-    const video = $('video');
-    if (!video.videoWidth) { setTimeout(readLoop, 500); return; }
-    busy = true;
-    try {
-      const canvas = $('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+if(p.length===3 && p[0].length===4){
+return `${p[2].padStart(2,'0')}/${p[1]}/${p[0]}`;
+}
 
-      const barcode = await detectBarcode(canvas);
-      const textResult = await (await getWorker()).recognize(canvas);
-      const text = String(textResult.data?.text || '');
-      lastRawText = text;
-      attempts++;
+return `${p[0].padStart(2,'0')}/${p[1].padStart(2,'0')}/${p[2]}`;
+}
 
-      if (stage === 'product') {
-        const code = findProductCode(text);
-        const lot = findLot(text);
-        const date = findDate(text);
-        const key = [code, lot, barcode].join('|');
+function parseCylinderNumber(text){
+const lines=String(text||'').split(/\n/).map(x=>x.trim()).filter(Boolean);
+const candidates=[];
 
-        if (code && lot && stable(key)) {
-          resultData.productCode = code;
-          resultData.lot = lot;
-          resultData.labelDate = date;
-          // Nunca substitui código de barras ausente pelo lote.
-          resultData.productBarcode = barcode;
-          resultData.rawText += '\n' + text;
-          updateStage('cylinder');
-        } else {
-          say('Etapa 1 de 2 — mantenha a etiqueta do produto/lote enquadrada.');
-          if (attempts >= 18) {
-            say('Não consegui confirmar o código do produto e o lote. Aproxime a câmera, melhore a iluminação ou preencha esses campos manualmente no recebimento.', 'error');
-            $('instruction').textContent = 'Leitura do produto não confirmada.';
-            running = false;
-            await stopCamera();
-          }
-        }
-      } else {
-        const number = findCylinderNumber(text);
-        const key = [number, barcode].join('|');
-        if ((number || barcode) && stable(key)) {
-          resultData.cylinderNumber = number;
-          resultData.cylinderBarcode = barcode;
-          resultData.rawText += '\n' + text;
-          await sendToForm();
-          return;
-        }
-        say('Etapa 2 de 2 — mantenha a etiqueta individual do cilindro enquadrada.');
-        if (attempts >= 14) {
-          $('skipCylinder').classList.remove('hidden');
-          say('Não consegui ler a identificação individual. Tente aproximar a câmera ou use “Continuar sem identificação individual”.', 'error');
-        }
-      }
-    } catch (error) {
-      say('Falha na leitura: ' + (error.message || error), 'error');
-    } finally {
-      busy = false;
-      if (running) setTimeout(readLoop, 500);
-    }
-  }
+for(const line of lines){
+const matches=line.match(/\b\d{8,12}\b/g)||[];
 
-  async function stopCamera() {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      stream = null;
-    }
-  }
+matches.forEach(v=>{
+if(!Object.keys(products).some(c=>digits(c)===v)){
+candidates.push(v);
+}
+});
+}
 
-  function validReturnOrigin() {
-    try {
-      const url = new URL(returnOrigin);
-      if (url.protocol !== 'https:') return '';
-      if (!/(^|\.)googleusercontent\.com$|(^|\.)script\.google\.com$/.test(url.hostname)) return '';
-      return url.origin;
-    } catch (e) { return ''; }
-  }
+return candidates.sort((a,b)=>b.length-a.length)[0]||'';
+}
 
-  async function sendToForm() {
-    if (!window.opener || window.opener.closed) {
-      say('A tela de recebimento não está aberta. Feche esta janela e abra a leitura pelo botão do formulário.', 'error');
-      return;
-    }
-    const origin = validReturnOrigin();
-    if (!origin) {
-      say('Não foi possível validar a origem da tela de recebimento. Abra o leitor pelo próprio formulário.', 'error');
-      return;
-    }
-    running = false;
-    await stopCamera();
-    const payload = {
-      type: 'OX2_LABEL_OCR',
-      target,
-      productCode: resultData.productCode,
-      lot: resultData.lot,
-      labelDate: resultData.labelDate,
-      productBarcode: resultData.productBarcode,
-      cylinderBarcode: resultData.cylinderBarcode,
-      cylinderNumber: resultData.cylinderNumber,
-      rawText: resultData.rawText
-    };
-    window.opener.postMessage(payload, origin);
-    $('instruction').textContent = 'Leitura concluída.';
-    say('Transferindo os dados para a tela de recebimento...');
-  }
+async function start(){
+try{
+if(!target)throw new Error('Abra esta página pelo botão do recebimento.');
 
-  $('skipCylinder').addEventListener('click', sendToForm);
+if(!navigator.mediaDevices?.getUserMedia){
+throw new Error('Este navegador não disponibiliza a câmera.');
+}
 
-  window.addEventListener('message', event => {
-    if (event.origin !== validReturnOrigin()) return;
-    if (event.data?.type !== 'OX2_LABEL_OCR_ACK' || event.data.target !== target) return;
-    if (event.data.success) {
-      say('Dados enviados ao recebimento. Esta janela será fechada.', 'ok');
-      setTimeout(() => window.close(), 900);
-    } else {
-      say(event.data.message || 'O recebimento não confirmou os dados.', 'error');
-    }
-  });
+stream=await navigator.mediaDevices.getUserMedia({
+video:{facingMode:{ideal:'environment'}},
+audio:false
+});
 
-  async function start() {
-    try {
-      if (!/^receivedItem\d+$/.test(target)) throw new Error('Abra esta página pelo botão de leitura do recebimento.');
-      if (!validReturnOrigin()) throw new Error('Origem do recebimento inválida. Abra o leitor pelo formulário do AME.');
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Este navegador não disponibiliza acesso à câmera.');
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {facingMode: {ideal: 'environment'}},
-        audio: false
-      });
-      $('video').srcObject = stream;
-      await $('video').play();
-      if ('BarcodeDetector' in window) {
-        try {
-          detector = new BarcodeDetector({
-            formats: ['code_128','code_39','ean_13','ean_8','itf','qr_code','codabar','upc_a','upc_e']
-          });
-        } catch (e) { detector = null; }
-      }
-      running = true;
-      updateStage('product');
-      readLoop();
-    } catch (error) {
-      say('Não foi possível iniciar a leitura: ' + (error.message || error), 'error');
-    }
-  }
+$('video').srcObject=stream;
+await $('video').play();
 
-  window.addEventListener('pagehide', () => {
-    running = false;
-    stopCamera();
-    if (worker) worker.terminate().catch(() => {});
-  });
-  start();
+if('BarcodeDetector' in window){
+try{
+detector=new BarcodeDetector({
+formats:['code_128','code_39','ean_13','ean_8','itf','qr_code','codabar','upc_a','upc_e']
+});
+}catch(e){
+detector=null;
+}
+}
+
+say('Câmera ativa. Primeiro fotografe a etiqueta do fornecedor/produto.','ok');
+
+}catch(e){
+say('Não foi possível iniciar a câmera: '+e.message,'error');
+}
+}
+
+async function capture(kind){
+if(working||!stream)return;
+
+const video=$('video');
+
+if(!video.videoWidth){
+say('Aguarde a câmera iniciar.','error');
+return;
+}
+
+working=true;
+
+const canvas=document.createElement('canvas');
+canvas.width=video.videoWidth;
+canvas.height=video.videoHeight;
+canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+
+say(kind==='product'?'Lendo etiqueta do produto, lote e data...':'Lendo identificação individual do cilindro...');
+
+try{
+if(!worker){
+worker=await Tesseract.createWorker('por+eng',1,{
+logger:m=>{
+if(m.status==='recognizing text'){
+say('Reconhecendo texto: '+Math.round((m.progress||0)*100)+'%');
+}
+}
+});
+}
+
+const result=await worker.recognize(canvas);
+const text=result.data.text||'';
+
+let decoded='';
+
+if(detector){
+try{
+const found=await detector.detect(canvas);
+if(found.length)decoded=String(found[0].rawValue||'').trim();
+}catch(e){}
+}
+
+if(kind==='product'){
+const code=parseProductCode(text);
+const lot=parseLot(text);
+const date=parseDate(text);
+
+productData={
+productCode:code,
+lot,
+date,
+productBarcode:decoded,
+rawText:text
+};
+
+$('productResult').textContent=
+`Produto: ${code?products[code]+' ('+code+')':'não identificado'}
+Lote: ${lot||'não identificado'}
+Data: ${date||'não identificada'}
+Código de barras: ${decoded||'não decodificado'}`;
+
+$('retryProduct').classList.remove('hidden');
+
+if(!code||!lot){
+say('Não consegui confirmar o código do produto e o lote. Ajuste o enquadramento e tente novamente.','error');
+}else{
+$('captureProduct').textContent='Etiqueta do produto lida ✓';
+$('captureProduct').disabled=true;
+$('captureCylinder').classList.remove('hidden');
+say('Primeira etiqueta lida. Agora fotografe a etiqueta individual do cilindro.','ok');
+}
+
+}else{
+const number=parseCylinderNumber(text);
+
+cylinderData={
+cylinderNumber:number,
+cylinderBarcode:decoded,
+rawText:text
+};
+
+$('cylinderResult').textContent=
+`Identificação legível: ${number||'não identificada'}
+Código de barras individual: ${decoded||'não decodificado'}`;
+
+$('retryCylinder').classList.remove('hidden');
+
+if(!number){
+say('Não consegui identificar o número legível. Aproxime a câmera da etiqueta individual e tente novamente.','error');
+}else{
+say('Identificação individual lida. Preparando envio ao recebimento...','ok');
+await send();
+}
+}
+
+}catch(e){
+say('Erro durante a leitura: '+(e.message||e),'error');
+}finally{
+working=false;
+}
+}
+
+async function send(){
+let origin='';
+
+try{
+const u=new URL(returnOrigin);
+if(u.protocol==='https:')origin=u.origin;
+}catch(e){}
+
+if(!origin||!window.opener||window.opener.closed){
+say('Não localizei a tela de recebimento. Feche esta janela e abra o leitor pelo formulário.','error');
+return;
+}
+
+if(!productData||!productData.productCode||!productData.lot||!cylinderData||!cylinderData.cylinderNumber){
+say('Faltam dados obrigatórios. Refaça a leitura da etiqueta indicada.','error');
+return;
+}
+
+const payload={
+type:'OX2_LABEL_OCR',
+target,
+productCode:productData.productCode,
+lot:productData.lot,
+labelDate:productData.date,
+productBarcode:productData.productBarcode,
+cylinderNumber:cylinderData.cylinderNumber,
+cylinderBarcode:cylinderData.cylinderBarcode,
+rawProductText:productData.rawText,
+rawCylinderText:cylinderData.rawText
+};
+
+window.opener.postMessage(payload,origin);
+$('captureCylinder').disabled=true;
+say('Dados enviados. Aguarde a confirmação do formulário...','ok');
+}
+
+function resetProduct(){
+productData=null;
+cylinderData=null;
+
+$('productResult').textContent='Aguardando captura.';
+$('cylinderResult').textContent='Aguardando a primeira etiqueta.';
+$('captureProduct').disabled=false;
+$('captureProduct').textContent='📷 Capturar etiqueta do produto';
+$('captureCylinder').classList.add('hidden');
+$('captureCylinder').disabled=false;
+$('retryProduct').classList.add('hidden');
+$('retryCylinder').classList.add('hidden');
+
+say('Pronto para ler novamente a etiqueta do produto.');
+}
+
+function resetCylinder(){
+cylinderData=null;
+$('cylinderResult').textContent='Aguardando captura.';
+$('captureCylinder').disabled=false;
+$('retryCylinder').classList.add('hidden');
+say('Fotografe novamente a etiqueta individual.');
+}
+
+$('captureProduct').addEventListener('click',()=>capture('product'));
+$('retryProduct').addEventListener('click',resetProduct);
+$('captureCylinder').addEventListener('click',()=>capture('cylinder'));
+$('retryCylinder').addEventListener('click',resetCylinder);
+
+window.addEventListener('message',e=>{
+if(e.data?.type==='OX2_LABEL_OCR_ACK'&&e.data.target===target){
+if(e.data.success){
+say('Recebimento confirmou os dados. Você já pode voltar ao formulário.','ok');
+$('finalStatus').textContent='Leitura concluída e dados transferidos.';
+$('finalStatus').className='status ok';
+$('finalStatus').classList.remove('hidden');
+setTimeout(()=>window.close(),900);
+}else{
+say(e.data.message||'O formulário não confirmou os dados.','error');
+}
+}
+});
+
+window.addEventListener('pagehide',()=>{
+if(stream)stream.getTracks().forEach(t=>t.stop());
+if(worker)worker.terminate();
+});
+
+start();
 })();
 </script>
 </body>
