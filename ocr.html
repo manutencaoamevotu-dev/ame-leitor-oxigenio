@@ -553,27 +553,25 @@ Código de barras: ${decoded || 'não decodificado'}`;
       $('retryProduct').classList.remove('hidden');
 
 
-      if (!code || !lot) {
+      // A leitura do produto é auxiliar: se não reconhecer código ou lote,
+      // permite seguir para a identificação individual do cilindro.
+      $('captureProduct').textContent =
+        'Etiqueta do produto capturada ✓';
 
+      $('captureProduct').disabled = true;
+
+      $('captureCylinder').classList.remove('hidden');
+
+      if (code && lot) {
         say(
-          'Não consegui confirmar o código do produto e o lote. Ajuste o enquadramento e tente novamente.',
-          'error'
-        );
-
-      } else {
-
-        $('captureProduct').textContent =
-          'Etiqueta do produto lida ✓';
-
-        $('captureProduct').disabled = true;
-
-        $('captureCylinder').classList.remove('hidden');
-
-        say(
-          'Primeira etiqueta lida. Agora fotografe a etiqueta individual do cilindro.',
+          'Etiqueta do produto lida. Agora fotografe a identificação individual do cilindro.',
           'ok'
         );
-
+      } else {
+        say(
+          'Não foi possível identificar todos os dados do produto/lote. Você pode continuar; confira e complete esses dados manualmente no recebimento.',
+          'error'
+        );
       }
 
 
@@ -673,16 +671,16 @@ async function send() {
   }
 
 
+  // Produto e lote podem permanecer pendentes para conferência manual.
+  // A identificação individual do cilindro continua obrigatória.
   if (
     !productData ||
-    !productData.productCode ||
-    !productData.lot ||
     !cylinderData ||
     !cylinderData.cylinderNumber
   ) {
 
     say(
-      'Faltam dados obrigatórios. Refaça a leitura da etiqueta indicada.',
+      'Não foi possível identificar o número individual do cilindro. Refaça a leitura dessa etiqueta.',
       'error'
     );
 
