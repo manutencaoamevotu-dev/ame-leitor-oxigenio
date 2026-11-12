@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -61,6 +60,10 @@ do cilindro. O sistema combina as duas leituras automaticamente.
 <button id="retryProduct" class="secondary hidden" type="button">
 Ler esta etiqueta novamente
 </button>
+
+<button id="continueProduct" class="secondary hidden" type="button">
+Não conseguiu ler? Continuar mesmo assim
+</button>
 </div>
 
 <div class="step" id="cylinderStep">
@@ -76,6 +79,10 @@ Aguardando a primeira etiqueta.
 
 <button id="retryCylinder" class="secondary hidden" type="button">
 Ler esta etiqueta novamente
+</button>
+
+<button id="continueManual" class="secondary hidden" type="button">
+Não conseguiu ler? Voltar ao recebimento para preencher manualmente
 </button>
 </div>
 
@@ -339,8 +346,441 @@ function parseCylinderNumber(text) {
 
   return candidates[0].value;
 }
+      // ======================================
+    // PRIMEIRA ETIQUETA — PRODUTO E LOTE
+    // ======================================
+
+    if (kind === 'product') {
+
+      const code = parseProductCode(text);
+
+      const lot = parseLot(text);
+
+      const date = parseDate(text);
 
 
+      productData = {
+
+        productCode:code,
+        lot,
+        date,
+        productBarcode:decoded,
+        rawText:text
+
+      };
+
+
+      $('productResult').textContent =
+
+        `Produto: ${
+          code
+            ? products[code] + ' (' + code + ')'
+            : 'não identificado'
+        }
+Lote: ${lot || 'não identificado'}
+Data: ${date || 'não identificada'}
+Código de barras: ${decoded || 'não decodificado'}`;
+
+
+      $('retryProduct').classList.remove('hidden');
+
+      // O OCR não bloqueia o processo. Se faltar produto ou lote,
+      // o usuário pode seguir e completar os campos no recebimento.
+      $('captureProduct').textContent =
+        'Etiqueta do produto capturada ✓';
+      $('captureProduct').disabled = true;
+      $('captureCylinder').classList.remove('hidden');
+
+      if (code && lot) {
+        $('continueProduct').classList.add('hidden');
+        say(
+          'Etiqueta do produto lida. Agora fotografe a identificação individual do cilindro.',
+          'ok'
+        );
+      } else {
+        $('continueProduct').classList.remove('hidden');
+        say(
+          'Leitura parcial. Você pode tentar novamente ou continuar e completar produto/lote manualmente no recebimento.',
+          'error'
+        );
+      }
+
+
+    // ======================================
+    // SEGUNDA ETIQUETA — CILINDRO
+    // ======================================
+
+    } else {
+
+      const number = parseCylinderNumber(text);
+
+
+      cylinderData = {
+
+        cylinderNumber:number,
+        cylinderBarcode:decoded,
+        rawText:text
+
+      };
+
+
+      $('cylinderResult').textContent =
+
+        `Identificação legível: ${
+          number || 'não identificada'
+        }
+Código de barras individual: ${
+          decoded || 'não decodificado'
+        }`;
+
+
+      $('retryCylinder').classList.remove('hidden');
+
+
+      if (!number) {
+
+        $('continueManual').classList.remove('hidden');
+        say(
+          'Não consegui identificar o número. Você pode tentar novamente ou voltar ao recebimento e digitar a identificação manualmente.',
+          'error'
+        );
+
+      } else {
+
+        $('continueManual').classList.add('hidden');
+
+        say(
+          'Identificação individual lida. Preparando envio ao recebimento...',
+          'ok'
+        );
+
+        await send();
+
+      }
+
+    }
+
+  } catch(e) {
+
+    if (kind === 'product') {
+      productData = {
+        productCode: '', lot: '', date: '',
+        productBarcode: '', rawText: ''
+      };
+      $('continueProduct').classList.remove('hidden');
+      $('captureCylinder').classList.remove('hidden');
+    } else {
+      cylinderData = {
+        cylinderNumber: '', cylinderBarcode: '', rawText: ''
+      };
+      $('continueManual').classList.remove('hidden');
+    }
+
+    say(
+      'A leitura automática falhou: ' + (e.message || e) +
+      '. Você pode tentar novamente ou continuar manualmente.',
+      'error'
+    );
+
+  } finally {
+
+    working = false;
+
+  }
+}
+
+
+// ==========================================
+// ENVIAR DADOS PARA RECEBIMENTO.HTML
+// ==========================================
+
+async function send(manualOnly = false) {
+
+  let origin = '';
+
+  try {
+    const u = new URL(returnOrigin);
+    if (u.protocol === 'https:') origin = u.origin;
+  } catch(e) {}
+
+  if (!origin || !window.opener || window.opener.closed) {
+    say(
+      'Não localizei a tela de recebimento. Feche esta janela e abra o leitor pelo formulário.',
+      'error'
+    );
+    return;
+  }
+
+  // Mesmo sem OCR, envia os campos que tiverem sido lidos.
+  // O que faltar será preenchido manualmente no Recebimento.html.
+  if (!productData) {
+    productData = {
+      productCode: '',
+      lot: '',
+      date: '',
+      productBarcode: '',
+      rawText: ''
+    };
+  }
+
+  if (!cylinderData) {
+    cylinderData = {
+      cylinderNumber: '',
+      cylinderBarcode: '',
+      rawText: ''
+    };
+  }
+
+  if (!manualOnly && !cylinderData.cylinderNumber) {
+    say(
+      'A identificação individual não foi reconhecida. Use a opção para preencher manualmente no recebimento.',
+      'error'
+    );
+    $('continueManual').classList.remove('hidden');
+    return;
+  }
+
+  const payload = {
+    type: 'OX2_LABEL_OCR',
+    target,
+    productCode: productData.productCode || '',
+    lot: productData.lot || '',
+    labelDate: productData.date || '',
+    productBarcode: productData.productBarcode || '',
+    cylinderNumber: manualOnly ? '' : (cylinderData.cylinderNumber || ''),
+    cylinderBarcode: cylinderData.cylinderBarcode || '',
+    rawProductText: productData.rawText || '',
+    rawCylinderText: cylinderData.rawText || '',
+    manualCompletion: Boolean(manualOnly || !cylinderData.cylinderNumber)
+  };
+
+  try {
+    window.opener.postMessage(payload, origin);
+    $('captureCylinder').disabled = true;
+    $('continueManual').disabled = true;
+    $('continueProduct').disabled = true;
+    say(
+      manualOnly
+        ? 'Dados parciais enviados. Voltando ao recebimento para completar manualmente...'
+        : 'Dados enviados. Aguarde a confirmação do formulário...',
+      'ok'
+    );
+  } catch (error) {
+    say(
+      'Não foi possível enviar os dados ao recebimento: ' + (error.message || error),
+      'error'
+    );
+  }
+}
+
+
+// Permite pular a leitura do produto/lote e seguir para a etiqueta individual.
+function continueWithoutProduct() {
+  productData = {
+    productCode: '',
+    lot: '',
+    date: '',
+    productBarcode: '',
+    rawText: ''
+  };
+
+  $('productResult').textContent =
+    'Produto e lote pendentes — preencher manualmente no recebimento.';
+  $('captureProduct').disabled = true;
+  $('retryProduct').classList.remove('hidden');
+  $('continueProduct').classList.add('hidden');
+  $('captureCylinder').classList.remove('hidden');
+  say(
+    'Tudo certo. Agora fotografe a etiqueta individual ou volte para preencher os dados manualmente.',
+    'ok'
+  );
+}
+
+
+// Envia o que foi reconhecido e devolve o usuário ao formulário.
+// O número individual ficará em branco para digitação manual.
+function continueToManualEntry() {
+  if (!productData) continueWithoutProduct();
+  cylinderData = cylinderData || {
+    cylinderNumber: '',
+    cylinderBarcode: '',
+    rawText: ''
+  };
+  send(true);
+}
+
+
+// ==========================================
+// REINICIAR LEITURA DO PRODUTO
+// ==========================================
+
+function resetProduct() {
+
+  productData = null;
+
+  cylinderData = null;
+
+  $('productResult').textContent =
+    'Aguardando captura.';
+
+  $('cylinderResult').textContent =
+    'Aguardando a primeira etiqueta.';
+
+  $('captureProduct').disabled = false;
+
+  $('captureProduct').textContent =
+    '📷 Capturar etiqueta do produto';
+
+  $('captureCylinder').classList.add('hidden');
+
+  $('captureCylinder').disabled = false;
+
+  $('retryProduct').classList.add('hidden');
+
+  $('continueProduct').classList.add('hidden');
+
+  $('retryCylinder').classList.add('hidden');
+
+  $('continueManual').classList.add('hidden');
+
+  say(
+    'Pronto para ler novamente a etiqueta do produto.'
+  );
+
+}
+
+
+// ==========================================
+// REINICIAR LEITURA DO CILINDRO
+// ==========================================
+
+function resetCylinder() {
+
+  cylinderData = null;
+
+  $('cylinderResult').textContent =
+    'Aguardando captura.';
+
+  $('captureCylinder').disabled = false;
+
+  $('retryCylinder').classList.add('hidden');
+
+  $('continueManual').classList.add('hidden');
+
+  say(
+    'Fotografe novamente a etiqueta individual.'
+  );
+
+}
+
+
+// ==========================================
+// BOTÕES
+// ==========================================
+
+$('captureProduct').addEventListener(
+  'click',
+  () => capture('product')
+);
+
+$('retryProduct').addEventListener(
+  'click',
+  resetProduct
+);
+
+$('continueProduct').addEventListener(
+  'click',
+  continueWithoutProduct
+);
+
+$('captureCylinder').addEventListener(
+  'click',
+  () => capture('cylinder')
+);
+
+$('retryCylinder').addEventListener(
+  'click',
+  resetCylinder
+);
+
+$('continueManual').addEventListener(
+  'click',
+  continueToManualEntry
+);
+
+
+// ==========================================
+// CONFIRMAÇÃO DO RECEBIMENTO.HTML
+// ==========================================
+
+window.addEventListener('message',e => {
+
+  if (
+    e.data?.type === 'OX2_LABEL_OCR_ACK' &&
+    e.data.target === target
+  ) {
+
+    if (e.data.success) {
+
+      say(
+        'Recebimento confirmou os dados. Você já pode voltar ao formulário.',
+        'ok'
+      );
+
+      $('finalStatus').textContent =
+        'Leitura concluída e dados transferidos.';
+
+      $('finalStatus').className = 'status ok';
+
+      $('finalStatus').classList.remove('hidden');
+
+      setTimeout(
+        () => window.close(),
+        900
+      );
+
+    } else {
+
+      say(
+        e.data.message || 'O formulário não confirmou os dados.',
+        'error'
+      );
+
+    }
+
+  }
+
+});
+
+
+// ==========================================
+// ENCERRAR CÂMERA AO FECHAR
+// ==========================================
+
+window.addEventListener('pagehide',() => {
+
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+  }
+
+  if (worker) {
+    worker.terminate();
+  }
+
+});
+
+
+// ==========================================
+// INICIALIZAÇÃO
+// ==========================================
+
+start();
+
+})();
+</script>
+
+</body>
+</html>
 // ==========================================
 // INICIAR CÂMERA
 // ==========================================
@@ -364,9 +804,9 @@ async function start() {
     stream = await navigator.mediaDevices.getUserMedia({
 
       video: {
-        facingMode: {
-          ideal:'environment'
-        }
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
       },
 
       audio:false
@@ -469,7 +909,7 @@ async function capture(kind) {
     if (!worker) {
 
       worker = await Tesseract.createWorker(
-        'por+eng',
+        'eng',
         1,
         {
           logger:m => {
@@ -489,394 +929,23 @@ async function capture(kind) {
 
     }
 
+    // Ajusta o OCR para o tipo de etiqueta fotografada.
+    // Produto: bloco com código, lote e data.
+    // Cilindro: uma linha numérica, evitando confundir com outros textos.
+    if (worker.setParameters) {
+      await worker.setParameters(
+        kind === 'product'
+          ? {
+              tessedit_pageseg_mode: '6',
+              tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/:-.',
+              preserve_interword_spaces: '1'
+            }
+          : {
+              tessedit_pageseg_mode: '7',
+              tessedit_char_whitelist: '0123456789',
+              preserve_interword_spaces: '1'
+            }
+      );
+    }
 
     const result = await worker.recognize(canvas);
-
-    const text = result.data.text || '';
-
-    let decoded = '';
-
-
-    // Tenta ler também o código de barras.
-
-    if (detector) {
-
-      try {
-
-        const found = await detector.detect(canvas);
-
-        if (found.length) {
-          decoded = String(found[0].rawValue || '').trim();
-        }
-
-      } catch(e) {}
-
-    }
-
-
-    // ======================================
-    // PRIMEIRA ETIQUETA — PRODUTO E LOTE
-    // ======================================
-
-    if (kind === 'product') {
-
-      const code = parseProductCode(text);
-
-      const lot = parseLot(text);
-
-      const date = parseDate(text);
-
-
-      productData = {
-
-        productCode:code,
-        lot,
-        date,
-        productBarcode:decoded,
-        rawText:text
-
-      };
-
-
-      $('productResult').textContent =
-
-        `Produto: ${
-          code
-            ? products[code] + ' (' + code + ')'
-            : 'não identificado'
-        }
-Lote: ${lot || 'não identificado'}
-Data: ${date || 'não identificada'}
-Código de barras: ${decoded || 'não decodificado'}`;
-
-
-      $('retryProduct').classList.remove('hidden');
-
-
-      // A leitura do produto é auxiliar: se não reconhecer código ou lote,
-      // permite seguir para a identificação individual do cilindro.
-      $('captureProduct').textContent =
-        'Etiqueta do produto capturada ✓';
-
-      $('captureProduct').disabled = true;
-
-      $('captureCylinder').classList.remove('hidden');
-
-      if (code && lot) {
-        say(
-          'Etiqueta do produto lida. Agora fotografe a identificação individual do cilindro.',
-          'ok'
-        );
-      } else {
-        say(
-          'Não foi possível identificar todos os dados do produto/lote. Você pode continuar; confira e complete esses dados manualmente no recebimento.',
-          'error'
-        );
-      }
-
-
-    // ======================================
-    // SEGUNDA ETIQUETA — CILINDRO
-    // ======================================
-
-    } else {
-
-      const number = parseCylinderNumber(text);
-
-
-      cylinderData = {
-
-        cylinderNumber:number,
-        cylinderBarcode:decoded,
-        rawText:text
-
-      };
-
-
-      $('cylinderResult').textContent =
-
-        `Identificação legível: ${
-          number || 'não identificada'
-        }
-Código de barras individual: ${
-          decoded || 'não decodificado'
-        }`;
-
-
-      $('retryCylinder').classList.remove('hidden');
-
-
-      if (!number) {
-
-        say(
-          'Não consegui identificar o número legível. Aproxime a câmera da etiqueta individual e tente novamente.',
-          'error'
-        );
-
-      } else {
-
-        say(
-          'Identificação individual lida. Preparando envio ao recebimento...',
-          'ok'
-        );
-
-        await send();
-
-      }
-
-    }
-
-  } catch(e) {
-
-    say(
-      'Erro durante a leitura: ' + (e.message || e),
-      'error'
-    );
-
-  } finally {
-
-    working = false;
-
-  }
-}
-
-
-// ==========================================
-// ENVIAR DADOS PARA RECEBIMENTO.HTML
-// ==========================================
-
-async function send() {
-
-  let origin = '';
-
-  try {
-
-    const u = new URL(returnOrigin);
-
-    if (u.protocol === 'https:') {
-      origin = u.origin;
-    }
-
-  } catch(e) {}
-
-
-  if (!origin || !window.opener || window.opener.closed) {
-
-    say(
-      'Não localizei a tela de recebimento. Feche esta janela e abra o leitor pelo formulário.',
-      'error'
-    );
-
-    return;
-  }
-
-
-  // Produto e lote podem permanecer pendentes para conferência manual.
-  // A identificação individual do cilindro continua obrigatória.
-  if (
-    !productData ||
-    !cylinderData ||
-    !cylinderData.cylinderNumber
-  ) {
-
-    say(
-      'Não foi possível identificar o número individual do cilindro. Refaça a leitura dessa etiqueta.',
-      'error'
-    );
-
-    return;
-  }
-
-
-  const payload = {
-
-    type:'OX2_LABEL_OCR',
-
-    target,
-
-    productCode:productData.productCode,
-
-    lot:productData.lot,
-
-    labelDate:productData.date,
-
-    productBarcode:productData.productBarcode,
-
-    cylinderNumber:cylinderData.cylinderNumber,
-
-    cylinderBarcode:cylinderData.cylinderBarcode,
-
-    rawProductText:productData.rawText,
-
-    rawCylinderText:cylinderData.rawText
-
-  };
-
-
-  window.opener.postMessage(payload,origin);
-
-  $('captureCylinder').disabled = true;
-
-  say(
-    'Dados enviados. Aguarde a confirmação do formulário...',
-    'ok'
-  );
-
-}
-
-
-// ==========================================
-// REINICIAR LEITURA DO PRODUTO
-// ==========================================
-
-function resetProduct() {
-
-  productData = null;
-
-  cylinderData = null;
-
-  $('productResult').textContent =
-    'Aguardando captura.';
-
-  $('cylinderResult').textContent =
-    'Aguardando a primeira etiqueta.';
-
-  $('captureProduct').disabled = false;
-
-  $('captureProduct').textContent =
-    '📷 Capturar etiqueta do produto';
-
-  $('captureCylinder').classList.add('hidden');
-
-  $('captureCylinder').disabled = false;
-
-  $('retryProduct').classList.add('hidden');
-
-  $('retryCylinder').classList.add('hidden');
-
-  say(
-    'Pronto para ler novamente a etiqueta do produto.'
-  );
-
-}
-
-
-// ==========================================
-// REINICIAR LEITURA DO CILINDRO
-// ==========================================
-
-function resetCylinder() {
-
-  cylinderData = null;
-
-  $('cylinderResult').textContent =
-    'Aguardando captura.';
-
-  $('captureCylinder').disabled = false;
-
-  $('retryCylinder').classList.add('hidden');
-
-  say(
-    'Fotografe novamente a etiqueta individual.'
-  );
-
-}
-
-
-// ==========================================
-// BOTÕES
-// ==========================================
-
-$('captureProduct').addEventListener(
-  'click',
-  () => capture('product')
-);
-
-$('retryProduct').addEventListener(
-  'click',
-  resetProduct
-);
-
-$('captureCylinder').addEventListener(
-  'click',
-  () => capture('cylinder')
-);
-
-$('retryCylinder').addEventListener(
-  'click',
-  resetCylinder
-);
-
-
-// ==========================================
-// CONFIRMAÇÃO DO RECEBIMENTO.HTML
-// ==========================================
-
-window.addEventListener('message',e => {
-
-  if (
-    e.data?.type === 'OX2_LABEL_OCR_ACK' &&
-    e.data.target === target
-  ) {
-
-    if (e.data.success) {
-
-      say(
-        'Recebimento confirmou os dados. Você já pode voltar ao formulário.',
-        'ok'
-      );
-
-      $('finalStatus').textContent =
-        'Leitura concluída e dados transferidos.';
-
-      $('finalStatus').className = 'status ok';
-
-      $('finalStatus').classList.remove('hidden');
-
-      setTimeout(
-        () => window.close(),
-        900
-      );
-
-    } else {
-
-      say(
-        e.data.message || 'O formulário não confirmou os dados.',
-        'error'
-      );
-
-    }
-
-  }
-
-});
-
-
-// ==========================================
-// ENCERRAR CÂMERA AO FECHAR
-// ==========================================
-
-window.addEventListener('pagehide',() => {
-
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
-  }
-
-  if (worker) {
-    worker.terminate();
-  }
-
-});
-
-
-// ==========================================
-// INICIALIZAÇÃO
-// ==========================================
-
-start();
-
-})();
-</script>
-
-</body>
-</html>
