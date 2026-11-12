@@ -949,3 +949,17 @@ async function capture(kind) {
     }
 
     const result = await worker.recognize(canvas);
+    const text = result.data.text || '';
+
+    let decoded = '';
+
+    // Tenta ler também o código de barras.
+    if (detector) {
+      try {
+        const found = await detector.detect(canvas);
+
+        if (found.length) {
+          decoded = String(found[0].rawValue || '').trim();
+        }
+      } catch(e) {}
+    }
