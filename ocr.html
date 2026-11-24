@@ -55,10 +55,10 @@ canvas{display:none}
 <body>
 <main>
 
-<header>
-<h1>Leitura automática das etiquetas</h1>
-<div>Controle de Oxigênio Medicinal — AME</div>
-</header>
+<?!= include('CabecalhoAME', {
+  title: 'Leitura OCR da Etiqueta',
+  subtitle: 'Identificação do Cilindro pela Leitura da Etiqueta'
+}); ?>
 
 <p>
 Aponte a câmera para a identificação individual do cilindro.
