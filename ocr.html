@@ -329,7 +329,7 @@ async function recognizeFrame() {
         const values = detected
           .map(item => String(item.rawValue || '').trim())
           .filter(Boolean);
-        if (values.length) text = [text, ...values].filter(Boolean).join('\\n');
+        if (values.length) text = [text, ...values].filter(Boolean).join('\n');
       } catch (error) {
         // A falha no decodificador não interrompe o OCR.
       }
