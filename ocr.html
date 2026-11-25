@@ -330,6 +330,12 @@ function extractIndividualNumber(text) {
     }
   }
 
+  // A etiqueta de referência enviada pelo AME mostra 9 dígitos
+  // (exemplo: 045686087). Quando houver um único candidato nesse formato,
+  // ele tem prioridade sobre números longos de lote/produto vistos ao fundo.
+  const nineDigits = [...candidates].filter(value => value.length === 9);
+  if (nineDigits.length === 1) return nineDigits[0];
+
   return candidates.size === 1 ? [...candidates][0] : '';
 }
 
