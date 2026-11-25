@@ -125,7 +125,6 @@ const embedded = window.parent !== window;
 
 let stream = null;
 let worker = null;
-let barcodeDetector = null;
 let active = false;
 let busy = false;
 let loopTimer = null;
@@ -237,20 +236,6 @@ async function startCamera() {
     await video.play();
 
     await prepareWorker();
-
-    if ('BarcodeDetector' in window) {
-      try {
-        const supported = await BarcodeDetector.getSupportedFormats();
-        const preferred = [
-          'code_128','code_39','ean_13','ean_8',
-          'itf','qr_code','codabar','upc_a','upc_e'
-        ];
-        const formats = preferred.filter(format => supported.includes(format));
-        if (formats.length) barcodeDetector = new BarcodeDetector({ formats });
-      } catch (error) {
-        barcodeDetector = null;
-      }
-    }
 
     active = true;
     lastSent = '';
