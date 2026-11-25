@@ -294,37 +294,40 @@ function extractCylinderNumber(text) {
   const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const candidates = new Set();
 
-  for (const line of lines) {
-    if (/\bLOTE\b|\bLOT\b|\bBATCH\b|\b2455\s*\//i.test(line)) continue;
-    const tokens = line.match(/\d+/g) || [];
-    if (!tokens.length) continue;
-
-    // Uma linha composta apenas por dígitos e separadores é um único número,
-    // mesmo quando o OCR insere espaços ou hífens.
+  // Linhas compostas somente por números/separadores podem conter o mesmo
+  // número quebrado em grupos. Agrupa linhas consecutivas para não tratar
+  // cada pedaço como se fosse uma identificação diferente.
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
     if (/^[\d\s.,;:_-]+$/.test(line)) {
-      const joined = line.replace(/\D/g, '');
+      const block = [];
+      while (index < lines.length && /^[\d\s.,;:_-]+$/.test(lines[index])) {
+        block.push(lines[index]);
+        index++;
+      }
+      const joined = block.join('').replace(/\D/g, '');
       if (joined.length >= 2 && joined.length <= 24) candidates.add(joined);
+      else {
+        block.forEach(part => {
+          const value = part.replace(/\D/g, '');
+          if (value.length >= 2 && value.length <= 24) candidates.add(value);
+        });
+      }
       continue;
     }
 
-    for (const token of tokens) {
-      if (token.length >= 2 && token.length <= 24) candidates.add(token);
+    if (!/\bLOTE\b|\bLOT\b|\bBATCH\b|\b2455\s*\//i.test(line)) {
+      const matches = line.match(/\d{2,24}/g) || [];
+      matches.forEach(value => candidates.add(value));
     }
+    index++;
   }
 
-  // Algumas leituras quebram o número em linhas sucessivas.
-  for (let i = 0; i < lines.length; i++) {
-    for (let count = 2; count <= 4 && i + count <= lines.length; count++) {
-      const block = lines.slice(i, i + count);
-      if (!block.every(line => /^[\d\s.,;:_-]+$/.test(line))) continue;
-      const joined = block.join('').replace(/\D/g, '');
-      if (joined.length >= 2 && joined.length <= 24) candidates.add(joined);
-    }
-  }
-
+  // O número individual pode ter comprimentos variados; não há regra de
+  // nove dígitos. Só aceita automaticamente quando a leitura é única.
   return candidates.size === 1 ? [...candidates][0] : '';
 }
-
 async function captureProduct() {
   if (busy || !cameraReady) return;
   try {
@@ -480,7 +483,7 @@ function sendToReceiving(manualCompletion) {
     lot: productData.lot || '',
     labelDate: productData.labelDate || '',
     productBarcode: productData.productBarcode || '',
-    cylinderNumber: manualCompletion ? '' : (cylinderData?.cylinderNumber || ''),
+    cylinderNumber: cylinderData?.cylinderNumber || '',
     cylinderBarcode: cylinderData?.cylinderBarcode || '',
     rawProductText: productData.rawText || '',
     rawCylinderText: cylinderData?.rawText || '',
