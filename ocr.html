@@ -585,22 +585,6 @@ async function retryProduct() {
   setStatus('Leitura reiniciada. Aponte para a etiqueta maior do fornecedor/produto.');
 }
 
-async function retryProduct() {
-  productData = null;
-  cylinderData = null;
-  $('productStep').classList.add('active');
-  $('productStep').classList.remove('done');
-  $('productTag').textContent = '1ª LEITURA';
-  $('productResult').textContent = 'Aguardando nova leitura do produto, lote e data.';
-  $('cylinderStep').classList.remove('active','done');
-  $('cylinderTag').textContent = '2ª LEITURA';
-  $('cylinderTag').className = 'tag';
-  $('cylinderResult').textContent = 'Aguardando a conclusão da primeira leitura.';
-  setStep('product');
-  updateButtons();
-  setStatus('Refaça a primeira leitura da etiqueta do fornecedor/produto.');
-}
-
 function sendToReceiving(manualCompletion) {
   if (autoSendStarted && !manualCompletion) return;
   if (!productData?.confirmed) {
