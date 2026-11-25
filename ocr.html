@@ -112,7 +112,7 @@ function setStep(step) {
     ? 'Etiqueta do fornecedor / produto'
     : 'Etiqueta individual do cilindro';
   $('scanHint').textContent = isProduct
-    ? 'Aponte para a etiqueta maior e mantenha o código 2455 visível no centro da imagem.'
+    ? 'Aponte para a etiqueta maior em qualquer posição. O leitor testa automaticamente horizontal, vertical e as posições invertidas.'
     : 'Produto reconhecido. Agora aponte para o adesivo pequeno em qualquer posição; o leitor também corrige a orientação automaticamente.';
   $('scanResult').textContent = isProduct
     ? 'Procurando a etiqueta do produto...'
