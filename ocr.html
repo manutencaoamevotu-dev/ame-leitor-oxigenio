@@ -52,7 +52,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 <section id="scanPanel" class="step active">
   <span id="scanTag" class="tag">ETAPA 1 DE 2</span>
   <h2 id="scanHeading">Etiqueta do fornecedor / produto</h2>
-  <p id="scanHint" class="hint">Aponte para a etiqueta maior e mantenha o código 2455 visível no centro da imagem.</p>
+  <p id="scanHint" class="hint">Aponte para a etiqueta maior em qualquer posição. O leitor testa automaticamente horizontal, vertical e as duas posições invertidas.</p>
   <div id="scanResult" class="result">Aguardando você ativar a câmera.</div>
 </section>
 
@@ -112,8 +112,8 @@ function setStep(step) {
     ? 'Etiqueta do fornecedor / produto'
     : 'Etiqueta individual do cilindro';
   $('scanHint').textContent = isProduct
-    ? 'Aponte para a etiqueta maior e mantenha o código 2455 visível no centro da imagem.'
-    : 'Produto reconhecido. Agora aponte para o adesivo pequeno e deixe visível o número abaixo do código de barras.';
+    ? 'Aponte para a etiqueta maior em qualquer posição. O leitor testa automaticamente horizontal, vertical e as posições invertidas.'
+    : 'Produto reconhecido. Agora aponte para o adesivo pequeno em qualquer posição; o leitor também corrige a orientação automaticamente.';
   $('scanResult').textContent = isProduct
     ? 'Procurando a etiqueta do produto...'
     : 'Agora procurando o número individual do cilindro...';
@@ -192,7 +192,7 @@ async function startCamera() {
     cameraReady = true;
     $('startButton').disabled = true;
     updateButtons();
-    setStatus('Câmera ativada. Aponte para a etiqueta maior; depois o leitor passará sozinho para o adesivo individual.', 'ok');
+    setStatus('Câmera ativada. Aponte para a etiqueta maior em qualquer posição. Não precisa girar o celular nem a etiqueta.', 'ok');
     setStep('product');
     beginAutoScan();
   } catch (error) {
@@ -251,31 +251,94 @@ async function readBarcode() {
   }
 }
 
+function rotateCanvas(source, degrees) {
+  if (degrees === 0) return source;
+
+  const quarterTurn = degrees === 90 || degrees === 270;
+  const rotated = document.createElement('canvas');
+  rotated.width = quarterTurn ? source.height : source.width;
+  rotated.height = quarterTurn ? source.width : source.height;
+
+  const context = rotated.getContext('2d', { willReadFrequently: true });
+  context.translate(rotated.width / 2, rotated.height / 2);
+  context.rotate(degrees * Math.PI / 180);
+  context.drawImage(source, -source.width / 2, -source.height / 2);
+  return rotated;
+}
+
+function scoreOCRCandidate(kind, text, confidence) {
+  if (kind === 'product') {
+    const detection = detectProductCode(text);
+    return (detection ? 100000 : 0) +
+      (parseLot(text) ? 1500 : 0) +
+      (parseLabelDate(text) ? 1000 : 0) +
+      confidence;
+  }
+
+  const number = extractCylinderNumber(text);
+  return (number ? 100000 : 0) +
+    (number ? Math.min(number.length, 24) * 100 : 0) +
+    confidence;
+}
+
 async function recognize(kind) {
   if (!cameraReady || busy || !worker) return null;
   busy = true;
   updateButtons();
   try {
     const barcodePromise = readBarcode();
-    const canvas = captureCanvas();
-    await worker.setParameters(kind === 'product' ? {
-      tessedit_pageseg_mode: '11',
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/:-.,',
-      preserve_interword_spaces: '1',
-      user_defined_dpi: '300'
-    } : {
-      tessedit_pageseg_mode: '11',
-      tessedit_char_whitelist: '0123456789',
-      preserve_interword_spaces: '1',
-      user_defined_dpi: '300'
-    });
-    const result = await worker.recognize(canvas);
+    const sourceCanvas = captureCanvas();
+    const rotations = [0, 90, 180, 270];
+    let best = null;
+    let bestScore = -1;
+
+    for (const rotation of rotations) {
+      const canvas = rotateCanvas(sourceCanvas, rotation);
+
+      await worker.setParameters(kind === 'product' ? {
+        tessedit_pageseg_mode: '11',
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/:-.,',
+        preserve_interword_spaces: '1',
+        user_defined_dpi: '300'
+      } : {
+        tessedit_pageseg_mode: '11',
+        tessedit_char_whitelist: '0123456789',
+        preserve_interword_spaces: '1',
+        user_defined_dpi: '300'
+      });
+
+      const result = await worker.recognize(canvas);
+      const text = String(result?.data?.text || '').trim();
+      const confidence = Number(result?.data?.confidence || 0);
+      const score = scoreOCRCandidate(kind, text, confidence);
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = { text, confidence, rotation };
+      }
+
+      // Para a etiqueta do produto, encerra cedo somente quando o código,
+      // lote e data já foram reconhecidos com boa confiança. Caso contrário,
+      // continua testando as outras orientações.
+      if (kind === 'product' &&
+          detectProductCode(text) &&
+          parseLot(text) &&
+          parseLabelDate(text) &&
+          confidence >= 80) {
+        break;
+      }
+
+      // Na etiqueta individual, um número longo com alta confiança já é
+      // suficiente para esta orientação; se não, testa as demais posições.
+      if (kind === 'cylinder' &&
+          extractCylinderNumber(text) &&
+          confidence >= 88) {
+        break;
+      }
+    }
+
     const barcode = await barcodePromise;
-    return {
-      text: String(result?.data?.text || '').trim(),
-      barcode,
-      confidence: Number(result?.data?.confidence || 0)
-    };
+    return best ? { ...best, barcode } : { text: '', barcode: '', confidence: 0, rotation: 0 };
   } finally {
     busy = false;
     updateButtons();
@@ -432,7 +495,7 @@ function extractCylinderNumber(text) {
 function showProductProgress(read, detection, count) {
   const lot = parseLot(read.text);
   $('scanResult').textContent =
-    'Identifiquei o código ' + detection.code +
+    'Identifiquei o código ' + detection.code + (read.rotation ? ' (posição ' + read.rotation + '°)' : '') +
     '\nLendo o lote e a data...' +
     '\nConfirmando a etiqueta automaticamente.';
 }
