@@ -293,39 +293,47 @@ function extractCylinderNumber(text) {
   const raw = String(text || '');
   const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const candidates = new Set();
-
-  // Linhas compostas somente por números/separadores podem conter o mesmo
-  // número quebrado em grupos. Agrupa linhas consecutivas para não tratar
-  // cada pedaço como se fosse uma identificação diferente.
   let index = 0;
+
   while (index < lines.length) {
     const line = lines[index];
+
+    // Não utiliza lote nem código de produto como identificação individual.
+    if (/\bLOTE\b|\bLOT\b|\bBATCH\b|\b2455\s*\//i.test(line)) {
+      index++;
+      continue;
+    }
+
     if (/^[\d\s.,;:_-]+$/.test(line)) {
       const block = [];
       while (index < lines.length && /^[\d\s.,;:_-]+$/.test(lines[index])) {
         block.push(lines[index]);
         index++;
       }
-      const joined = block.join('').replace(/\D/g, '');
-      if (joined.length >= 2 && joined.length <= 24) candidates.add(joined);
-      else {
-        block.forEach(part => {
-          const value = part.replace(/\D/g, '');
-          if (value.length >= 2 && value.length <= 24) candidates.add(value);
+
+      const parts = block.map(value => value.replace(/\D/g, '')).filter(Boolean);
+      if (!parts.length) continue;
+
+      // Só une fragmentos muito curtos (ex.: 045 / 686 / 087).
+      // Se houver linhas com sequências maiores, mantém cada uma como
+      // candidata separada para que duas identificações não sejam fundidas.
+      if (parts.length > 1 && parts.every(value => value.length <= 3)) {
+        const joined = parts.join('');
+        if (joined.length <= 24) candidates.add(joined);
+      } else {
+        parts.forEach(value => {
+          if (value.length <= 24) candidates.add(value);
         });
       }
       continue;
     }
 
-    if (!/\bLOTE\b|\bLOT\b|\bBATCH\b|\b2455\s*\//i.test(line)) {
-      const matches = line.match(/\d{2,24}/g) || [];
-      matches.forEach(value => candidates.add(value));
-    }
+    const matches = line.match(/\d{2,24}/g) || [];
+    matches.forEach(value => candidates.add(value));
     index++;
   }
 
-  // O número individual pode ter comprimentos variados; não há regra de
-  // nove dígitos. Só aceita automaticamente quando a leitura é única.
+  // Comprimento variável: só envia quando há uma única leitura possível.
   return candidates.size === 1 ? [...candidates][0] : '';
 }
 async function captureProduct() {
