@@ -24,9 +24,21 @@ header{
 }
 h1{font-size:21px;margin:0 0 5px}
 p{line-height:1.45;font-size:14px}
+ .camera-wrap{position:relative;margin-top:8px}
 video{
   display:block;width:100%;max-height:55vh;
   object-fit:contain;background:#111;border-radius:10px
+}
+.scan-guide{
+  position:absolute;left:5%;top:18%;width:90%;height:72%;
+  border:2px solid rgba(255,255,255,.88);border-radius:10px;
+  box-shadow:0 0 0 999px rgba(0,0,0,.12);
+  pointer-events:none
+}
+.scan-guide span{
+  position:absolute;left:0;right:0;bottom:0;padding:5px 8px;
+  color:#fff;background:rgba(12,39,58,.72);font-size:11px;
+  text-align:center;border-radius:0 0 7px 7px
 }
 button{
   border:0;border-radius:8px;padding:13px 15px;
@@ -42,6 +54,7 @@ button:disabled{opacity:.5}
   font-size:13px;line-height:1.5
 }
 .status.error{background:#fdeaea;color:#a12626}
+.result{max-height:180px;overflow:auto}
 .status.ok{background:#e4f5eb;color:#176b48}
 .result{
   padding:10px;background:#f7fbfe;border:1px solid #dce8f1;
@@ -65,7 +78,10 @@ Aponte a câmera para a identificação individual do cilindro.
 O sistema fará a leitura continuamente e procurará o cadastro correspondente.
 </p>
 
-<video id="video" autoplay playsinline muted></video>
+<div class="camera-wrap">
+  <video id="video" autoplay playsinline muted></video>
+  <div class="scan-guide" aria-hidden="true"><span>Enquadre a etiqueta dentro desta área</span></div>
+</div>
 
 <div id="status" class="status">
 Aguardando autorização para acessar a câmera...
@@ -105,8 +121,11 @@ const resultBox = document.getElementById('result');
 const startButton = document.getElementById('startButton');
 const stopButton = document.getElementById('stopButton');
 
+const embedded = window.parent !== window;
+
 let stream = null;
 let worker = null;
+let barcodeDetector = null;
 let active = false;
 let busy = false;
 let loopTimer = null;
@@ -119,13 +138,30 @@ function status(message, type) {
 }
 
 function sendParent(type, extra) {
-  if (!window.opener || window.opener.closed) return;
-
-  window.opener.postMessage({
+  const payload = {
     type: type,
     nonce: nonce,
     ...(extra || {})
-  }, returnOrigin);
+  };
+
+  // Dentro de iframe: protocolo AME_OCR_TEXT + nonce.
+  if (embedded) {
+    window.parent.postMessage(payload, '*');
+    return true;
+  }
+
+  // Janela separada: compatibilidade com a Movimentação publicada,
+  // que aguarda OX2_OCR_TEXT (e não AME_OCR_TEXT).
+  if (window.opener && !window.opener.closed &&
+      returnOrigin.startsWith('https://')) {
+    const outgoing = type === 'AME_OCR_TEXT'
+      ? { ...payload, type: 'OX2_OCR_TEXT' }
+      : payload;
+    window.opener.postMessage(outgoing, returnOrigin);
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeText(text) {
@@ -163,7 +199,8 @@ async function prepareWorker() {
     tessedit_char_whitelist:
       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./_-:',
     tessedit_pageseg_mode: '6',
-    preserve_interword_spaces: '1'
+    preserve_interword_spaces: '1',
+    user_defined_dpi: '300'
   });
 
   return worker;
@@ -199,6 +236,20 @@ async function startCamera() {
 
     await prepareWorker();
 
+    if ('BarcodeDetector' in window) {
+      try {
+        const supported = await BarcodeDetector.getSupportedFormats();
+        const preferred = [
+          'code_128','code_39','ean_13','ean_8',
+          'itf','qr_code','codabar','upc_a','upc_e'
+        ];
+        const formats = preferred.filter(format => supported.includes(format));
+        if (formats.length) barcodeDetector = new BarcodeDetector({ formats });
+      } catch (error) {
+        barcodeDetector = null;
+      }
+    }
+
     active = true;
     lastSent = '';
     lastSentAt = 0;
@@ -229,23 +280,28 @@ function captureFrame() {
     return null;
   }
 
-  const maxWidth = 1100;
-  const scale = Math.min(1, maxWidth / video.videoWidth);
+  // Recorta uma área ampla ao redor do centro, onde a etiqueta costuma
+  // ser posicionada, e amplia a imagem para facilitar a leitura dos dígitos.
+  const sx = Math.round(video.videoWidth * 0.05);
+  const sy = Math.round(video.videoHeight * 0.14);
+  const sw = Math.round(video.videoWidth * 0.90);
+  const sh = Math.round(video.videoHeight * 0.78);
+  const scale = Math.min(2, 1700 / sw);
 
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.width = Math.max(1, Math.round(sw * scale));
+  canvas.height = Math.max(1, Math.round(sh * scale));
 
   const context = canvas.getContext('2d', {
     willReadFrequently: true
   });
 
+  context.filter = 'grayscale(1) contrast(1.45) brightness(1.05)';
   context.drawImage(
     video,
-    0,
-    0,
-    canvas.width,
-    canvas.height
+    sx, sy, sw, sh,
+    0, 0, canvas.width, canvas.height
   );
+  context.filter = 'none';
 
   return canvas;
 }
@@ -261,9 +317,23 @@ async function recognizeFrame() {
   try {
     const result = await worker.recognize(frame);
 
-    const text = String(
+    let text = String(
       result && result.data && result.data.text || ''
     ).trim();
+
+    // Em navegadores compatíveis, tenta decodificar o código de barras
+    // além de reconhecer os caracteres impressos.
+    if (barcodeDetector) {
+      try {
+        const detected = await barcodeDetector.detect(frame);
+        const values = detected
+          .map(item => String(item.rawValue || '').trim())
+          .filter(Boolean);
+        if (values.length) text = [text, ...values].filter(Boolean).join('\\n');
+      } catch (error) {
+        // A falha no decodificador não interrompe o OCR.
+      }
+    }
 
     if (!text) {
       status(
@@ -287,11 +357,16 @@ async function recognizeFrame() {
       lastSent = normalized;
       lastSentAt = now;
 
-      status('Identificação detectada. Consultando o Cadastro Mestre...');
+      status('Texto reconhecido. Conferindo a identificação no Cadastro Mestre...');
 
-      sendParent('AME_OCR_TEXT', {
-        text: text
-      });
+      const sent = sendParent('AME_OCR_TEXT', { text: text });
+      if (!sent) {
+        status(
+          'Leitura feita, mas não consegui devolver o resultado à Movimentação. ' +
+          'Feche este leitor e abra novamente pelo botão “Ler Etiqueta”.',
+          'error'
+        );
+      }
     }
 
   } catch (error) {
@@ -346,35 +421,53 @@ async function closeReader() {
   }
 
   sendParent('AME_OCR_CLOSED');
-  window.close();
+  status('Leitor encerrado. A câmera foi desligada.', 'ok');
+
+  // window.close funciona em janela aberta por script, mas não fecha um iframe.
+  if (!embedded) window.close();
 }
 
 startButton.addEventListener('click', startCamera);
 stopButton.addEventListener('click', closeReader);
 
 window.addEventListener('message', event => {
-  if (event.origin !== returnOrigin) return;
-  if (event.source !== window.opener) return;
+  const fromHost = embedded
+    ? event.source === window.parent
+    : event.source === window.opener && event.origin === returnOrigin;
+
+  if (!fromHost) return;
 
   const data = event.data || {};
+  if (data.nonce && String(data.nonce) !== nonce) return;
 
-  if (String(data.nonce || '') !== nonce) return;
+  const type = String(data.type || '');
+  const feedback = type === 'AME_OCR_FEEDBACK' ? String(data.status || '') : '';
 
-  if (data.type === 'AME_OCR_MATCHED') {
-    status('Cilindro localizado. Encerrando a câmera...', 'ok');
+  if (type === 'AME_OCR_MATCHED' || type === 'OX2_OCR_MATCHED') {
+    status('Cilindro localizado no Cadastro Mestre. Encerrando a câmera...', 'ok');
     closeReader();
 
-  } else if (data.type === 'AME_OCR_AMBIGUOUS') {
+  } else if (
+    type === 'AME_OCR_AMBIGUOUS' ||
+    type === 'OX2_OCR_AMBIGUOUS' ||
+    feedback === 'ambiguous'
+  ) {
     status(
-      'Mais de um cilindro correspondeu à leitura. ' +
-      'Aproxime a etiqueta individual e mantenha-a firme.',
+      'A leitura encontrou mais de um cadastro possível. ' +
+      'Aproxime a etiqueta e tente novamente. Nenhum cilindro foi selecionado.',
       'error'
     );
 
-  } else if (data.type === 'AME_OCR_NO_MATCH') {
+  } else if (
+    type === 'AME_OCR_NO_MATCH' ||
+    type === 'OX2_OCR_NO_MATCH' ||
+    feedback === 'not_found'
+  ) {
     status(
-      'Texto ainda não localizado no Cadastro Mestre. ' +
-      'Ajuste o enquadramento e aguarde uma nova leitura.'
+      'O texto foi reconhecido, mas não correspondeu a um identificador único ' +
+      'do Cadastro Mestre. Confira se está enquadrando a identificação individual ' +
+      'do cilindro, e não apenas o lote ou o código do produto.',
+      'error'
     );
   }
 });
@@ -383,9 +476,15 @@ window.addEventListener('pagehide', () => {
   stopCamera();
 });
 
-if (!nonce || !returnOrigin || !window.opener) {
+if (embedded) {
+  if (!nonce) {
+    status('Identificador de comunicação ausente. Feche e abra novamente pelo sistema AME.', 'error');
+  } else {
+    status('Leitor preparado. Clique em Iniciar câmera.');
+  }
+} else if (!nonce || !returnOrigin.startsWith('https://') || !window.opener) {
   status(
-    'Abra o leitor pelo botão da tela de Movimentação do AME.',
+    'Abra o leitor pelo botão “Ler Etiqueta” da tela de Movimentação do AME.',
     'error'
   );
 } else {
