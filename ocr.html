@@ -74,14 +74,15 @@ canvas{display:none}
 }); ?>
 
 <p>
-Aponte a câmera para a SEGUNDA ETIQUETA, que contém o número individual do cilindro.
-Não use a etiqueta do fornecedor/produto que informa apenas lote e código do produto.
-O sistema fará a leitura continuamente e procurará o cadastro correspondente.
+Aponte para a etiqueta pequena e individual do cilindro: ela tem um código de barras e o número impresso logo abaixo.
+Exemplo do formato já cadastrado: 045686087.
+Não use a etiqueta maior do fornecedor/produto, que informa lote e código do produto.
+O sistema fará a leitura numérica continuamente e procurará a identificação individual no Cadastro Mestre.
 </p>
 
 <div class="camera-wrap">
   <video id="video" autoplay playsinline muted></video>
-  <div class="scan-guide" aria-hidden="true"><span>Enquadre a etiqueta com o número individual</span></div>
+  <div class="scan-guide" aria-hidden="true"><span>Etiqueta pequena: código de barras + número abaixo</span></div>
 </div>
 
 <div id="status" class="status">
@@ -197,10 +198,11 @@ async function prepareWorker() {
     }
   });
 
+  // Este leitor é exclusivo da identificação individual. A etiqueta correta
+  // tem código de barras e uma sequência numérica impressa logo abaixo.
   await worker.setParameters({
-    tessedit_char_whitelist:
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./_-:',
-    tessedit_pageseg_mode: '6',
+    tessedit_char_whitelist: '0123456789',
+    tessedit_pageseg_mode: '11',
     preserve_interword_spaces: '1',
     user_defined_dpi: '300'
   });
@@ -294,6 +296,43 @@ function captureFrame() {
   return canvas;
 }
 
+function extractIndividualNumber(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const candidates = new Set();
+
+  // Primeiro, procura uma sequência contínua de 8 a 12 dígitos.
+  for (const line of lines) {
+    const direct = line.match(/\d{8,12}/g) || [];
+    direct.forEach(value => candidates.add(value));
+
+    // O OCR pode separar o número em grupos, por exemplo 045 686 087.
+    if (/^[\d\s.,;:_-]+$/.test(line)) {
+      const joined = line.replace(/\D/g, '');
+      if (joined.length >= 8 && joined.length <= 12) {
+        candidates.add(joined);
+      }
+    }
+  }
+
+  // Em alguns aparelhos, o Tesseract quebra uma sequência em duas ou três
+  // linhas. Só junta linhas compostas exclusivamente por números e separadores.
+  for (let start = 0; start < lines.length; start++) {
+    for (let count = 2; count <= 3 && start + count <= lines.length; count++) {
+      const block = lines.slice(start, start + count);
+      if (!block.every(line => /^[\d\s.,;:_-]+$/.test(line))) continue;
+      const joined = block.join('').replace(/\D/g, '');
+      if (joined.length >= 8 && joined.length <= 12) {
+        candidates.add(joined);
+      }
+    }
+  }
+
+  return candidates.size === 1 ? [...candidates][0] : '';
+}
+
 async function recognizeFrame() {
   if (!active || busy || !worker) return;
 
@@ -305,20 +344,28 @@ async function recognizeFrame() {
   try {
     const result = await worker.recognize(frame);
 
-    const text = String(
+    const rawText = String(
       result && result.data && result.data.text || ''
     ).trim();
+    const individualNumber = extractIndividualNumber(rawText);
 
-    if (!text) {
-      status(
-        'Câmera ativa. Aguardando caracteres legíveis na etiqueta.'
-      );
+    if (!individualNumber) {
+      resultBox.textContent =
+        'Número individual: aguardando leitura\n' +
+        (rawText ? 'Leitura numérica parcial: ' + rawText : 'Nenhum número legível nesta imagem.');
+      if (!pendingText) {
+        status(
+          'Não reconheci o número da etiqueta individual. Centralize a etiqueta pequena ' +
+          'e deixe visíveis os dígitos impressos abaixo do código de barras.'
+        );
+      }
       return;
     }
 
-    resultBox.textContent = 'Texto detectado:\n' + text;
+    resultBox.textContent =
+      'Número individual detectado: ' + individualNumber;
 
-    const normalized = normalizeText(text);
+    const normalized = individualNumber;
     const now = Date.now();
 
     // Evita reenviar a mesma leitura enquanto a consulta anterior aguarda resposta.
@@ -347,7 +394,7 @@ async function recognizeFrame() {
 
       status('Texto reconhecido. Conferindo a identificação no Cadastro Mestre...');
 
-      const sent = sendParent('AME_OCR_TEXT', { text: text });
+      const sent = sendParent('AME_OCR_TEXT', { text: individualNumber });
       if (!sent) {
         pendingText = '';
         status(
