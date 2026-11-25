@@ -131,6 +131,8 @@ let busy = false;
 let loopTimer = null;
 let lastSent = '';
 let lastSentAt = 0;
+let pendingText = '';
+let pendingSince = 0;
 
 function status(message, type) {
   statusBox.textContent = message;
@@ -347,8 +349,19 @@ async function recognizeFrame() {
     const normalized = normalizeText(text);
     const now = Date.now();
 
+    // Evita reenviar a mesma leitura enquanto a consulta anterior aguarda resposta.
+    if (pendingText && now - pendingSince > 8000) {
+      pendingText = '';
+      status(
+        'A Movimentação não respondeu à consulta em 8 segundos. ' +
+        'Verifique a conexão e mantenha o leitor aberto para tentar novamente.',
+        'error'
+      );
+    }
+
     if (
       normalized.length >= 4 &&
+      !pendingText &&
       (
         normalized !== lastSent ||
         now - lastSentAt > 5000
@@ -356,11 +369,14 @@ async function recognizeFrame() {
     ) {
       lastSent = normalized;
       lastSentAt = now;
+      pendingText = normalized;
+      pendingSince = now;
 
       status('Texto reconhecido. Conferindo a identificação no Cadastro Mestre...');
 
       const sent = sendParent('AME_OCR_TEXT', { text: text });
       if (!sent) {
+        pendingText = '';
         status(
           'Leitura feita, mas não consegui devolver o resultado à Movimentação. ' +
           'Feche este leitor e abra novamente pelo botão “Ler Etiqueta”.',
@@ -444,6 +460,7 @@ window.addEventListener('message', event => {
   const feedback = type === 'AME_OCR_FEEDBACK' ? String(data.status || '') : '';
 
   if (type === 'AME_OCR_MATCHED' || type === 'OX2_OCR_MATCHED') {
+    pendingText = '';
     status('Cilindro localizado no Cadastro Mestre. Encerrando a câmera...', 'ok');
     closeReader();
 
@@ -452,6 +469,8 @@ window.addEventListener('message', event => {
     type === 'OX2_OCR_AMBIGUOUS' ||
     feedback === 'ambiguous'
   ) {
+    pendingText = '';
+    lastSentAt = Date.now();
     status(
       'A leitura encontrou mais de um cadastro possível. ' +
       'Aproxime a etiqueta e tente novamente. Nenhum cilindro foi selecionado.',
@@ -463,6 +482,8 @@ window.addEventListener('message', event => {
     type === 'OX2_OCR_NO_MATCH' ||
     feedback === 'not_found'
   ) {
+    pendingText = '';
+    lastSentAt = Date.now();
     status(
       'O texto foi reconhecido, mas não correspondeu a um identificador único ' +
       'do Cadastro Mestre. Confira se está enquadrando a identificação individual ' +
