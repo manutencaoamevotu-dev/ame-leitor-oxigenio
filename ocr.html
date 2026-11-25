@@ -323,6 +323,7 @@ async function recognizeFrame() {
     // Evita reenviar a mesma leitura enquanto a consulta anterior aguarda resposta.
     if (pendingText && now - pendingSince > 8000) {
       pendingText = '';
+      lastSentAt = now;
       status(
         'A Movimentação não respondeu à consulta em 8 segundos. ' +
         'Verifique a conexão e mantenha o leitor aberto para tentar novamente.',
