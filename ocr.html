@@ -43,36 +43,21 @@ button:disabled{opacity:.45;cursor:not-allowed}
 
 <p>São duas leituras diferentes para cada cilindro recebido. Primeiro, a etiqueta maior do fornecedor/produto (código iniciado por <b>2455/</b>, lote e data). Depois, o adesivo pequeno com código de barras e número individual do cilindro. O número individual pode variar: não existe um tamanho fixo obrigatório.</p>
 
-<div id="status" class="status">Abra pelo formulário de Recebimento e toque em “Iniciar câmera”. Depois disso, a leitura será automática.</div>
+<div id="status" class="status">Toque em “Ativar câmera” uma vez. Depois, só aponte para as etiquetas. O leitor muda de etapa automaticamente.</div>
 <video id="video" autoplay playsinline muted></video>
 <div class="actions">
-  <button id="startButton" class="primary" type="button">Iniciar câmera</button>
-  <button id="stopButton" class="secondary" type="button" disabled>Parar câmera</button>
+  <button id="startButton" class="primary" type="button">Ativar câmera</button>
 </div>
 
-<section id="productStep" class="step active">
-  <span id="productTag" class="tag">1ª LEITURA AUTOMÁTICA</span>
-  <h2>Etiqueta do fornecedor / produto</h2>
-  <p class="hint">Aponte para a etiqueta maior e mantenha o celular firme. O leitor procura continuamente o código 2455/..., o lote e uma data válida. Não precisa fotografar nem tocar em capturar.</p>
-  <div id="productResult" class="result">Aguardando a câmera reconhecer a etiqueta do produto...</div>
-  <div class="actions">
-    <button id="skipProduct" class="secondary" type="button" disabled>Pular esta leitura e completar manualmente</button>
-  </div>
-</section>
-
-<section id="cylinderStep" class="step">
-  <span id="cylinderTag" class="tag">2ª LEITURA AUTOMÁTICA</span>
-  <h2>Etiqueta individual do cilindro</h2>
-  <p class="hint">Produto reconhecido. Agora aponte para o adesivo pequeno e mantenha o número impresso abaixo do código de barras visível. O sistema fará a leitura contínua e enviará os campos ao Recebimento quando confirmar o mesmo número em leituras seguidas.</p>
-  <div id="cylinderResult" class="result">Aguardando a identificação individual do cilindro...</div>
-  <div class="actions">
-    <button id="retryProduct" class="secondary" type="button" disabled>Voltar e refazer a leitura do produto</button>
-    <button id="sendManual" class="secondary" type="button" disabled>Enviar para completar manualmente no Recebimento</button>
-  </div>
+<section id="scanPanel" class="step active">
+  <span id="scanTag" class="tag">ETAPA 1 DE 2</span>
+  <h2 id="scanHeading">Etiqueta do fornecedor / produto</h2>
+  <p id="scanHint" class="hint">Aponte para a etiqueta maior e mantenha o código 2455 visível no centro da imagem.</p>
+  <div id="scanResult" class="result">Aguardando você ativar a câmera.</div>
 </section>
 
 <div id="finalStatus" class="status hidden"></div>
-<p class="hint">O número de série do fabricante permanece em campo separado. O lote, o código do produto, o código de barras do produto e a identificação individual não serão tratados como se fossem o mesmo dado.</p>
+<p class="hint">Depois da segunda leitura, os dados são enviados ao Recebimento para conferência.</p>
 </main>
 
 <script>
@@ -120,24 +105,31 @@ function setStatus(message, type) {
 }
 
 function setStep(step) {
-  const product = step === 'product';
-  $('productStep').classList.toggle('active', product);
-  $('cylinderStep').classList.toggle('active', !product);
-  $('cylinderStep').classList.toggle('done', Boolean(cylinderData && cylinderData.cylinderNumber));
+  const isProduct = step === 'product';
+  $('scanTag').textContent = isProduct ? 'ETAPA 1 DE 2' : 'ETAPA 2 DE 2';
+  $('scanTag').className = 'tag';
+  $('scanHeading').textContent = isProduct
+    ? 'Etiqueta do fornecedor / produto'
+    : 'Etiqueta individual do cilindro';
+  $('scanHint').textContent = isProduct
+    ? 'Aponte para a etiqueta maior e mantenha o código 2455 visível no centro da imagem.'
+    : 'Produto reconhecido. Agora aponte para o adesivo pequeno e deixe visível o número abaixo do código de barras.';
+  $('scanResult').textContent = isProduct
+    ? 'Procurando a etiqueta do produto...'
+    : 'Agora procurando o número individual do cilindro...';
+  $('scanPanel').classList.add('active');
 }
 
 function updateButtons() {
-  $('skipProduct').disabled = !cameraReady || busy || Boolean(productData && productData.confirmed);
-  $('retryProduct').disabled = !cameraReady || busy || !productData?.confirmed;
-  $('sendManual').disabled = !cameraReady || busy || !productData?.confirmed || autoSendStarted;
-  $('stopButton').disabled = !cameraReady;
+  $('startButton').classList.toggle('hidden', cameraReady);
+  $('startButton').disabled = cameraReady || busy;
 }
 
 async function prepareWorker() {
   if (worker) return worker;
   if (!window.Tesseract) throw new Error('Biblioteca OCR indisponível. Verifique a conexão com a internet.');
   setStatus('Preparando o mecanismo de reconhecimento...');
-  worker = await Tesseract.createWorker('por+eng', 1, {
+  worker = await Tesseract.createWorker('eng', 1, {
     logger: info => {
       // O percentual do Tesseract indica apenas o fim do processamento do
       // quadro, não a precisão nem a identificação da etiqueta. Não o exibimos
@@ -169,6 +161,26 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
 
+    // Solicita foco contínuo quando o navegador do celular disponibiliza o recurso.
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
+      const capabilities = videoTrack.getCapabilities();
+      const advanced = [];
+      if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+        advanced.push({ focusMode: 'continuous' });
+      }
+      if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes('continuous')) {
+        advanced.push({ exposureMode: 'continuous' });
+      }
+      if (advanced.length && typeof videoTrack.applyConstraints === 'function') {
+        try {
+          await videoTrack.applyConstraints({ advanced });
+        } catch (focusError) {
+          // Mantém o foco automático nativo se o navegador não aceitar a configuração.
+        }
+      }
+    }
+
     if ('BarcodeDetector' in window) {
       try {
         detector = new BarcodeDetector({ formats: ['code_128','code_39','ean_13','ean_8','itf','qr_code','codabar','upc_a','upc_e'] });
@@ -180,7 +192,7 @@ async function startCamera() {
     cameraReady = true;
     $('startButton').disabled = true;
     updateButtons();
-    setStatus('Câmera ativa. A leitura automática começou: aponte para a etiqueta maior e mantenha o celular firme.', 'ok');
+    setStatus('Câmera ativada. Aponte para a etiqueta maior; depois o leitor passará sozinho para o adesivo individual.', 'ok');
     setStep('product');
     beginAutoScan();
   } catch (error) {
@@ -214,7 +226,7 @@ function captureCanvas() {
   const cropHeight = Math.round(sourceHeight * 0.94);
   const sx = Math.round((sourceWidth - cropWidth) / 2);
   const sy = Math.round((sourceHeight - cropHeight) / 2);
-  const scale = 2;
+  const scale = Math.min(1.4, 1800 / cropWidth);
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(cropWidth * scale);
   canvas.height = Math.round(cropHeight * scale);
@@ -247,7 +259,7 @@ async function recognize(kind) {
     const barcodePromise = readBarcode();
     const canvas = captureCanvas();
     await worker.setParameters(kind === 'product' ? {
-      tessedit_pageseg_mode: '6',
+      tessedit_pageseg_mode: '11',
       tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/:-.,',
       preserve_interword_spaces: '1',
       user_defined_dpi: '300'
@@ -418,31 +430,19 @@ function extractCylinderNumber(text) {
   return candidates.size === 1 ? [...candidates][0] : '';
 }
 function showProductProgress(read, detection, count) {
-  const description = detection.known
-    ? PRODUCTS[detection.code] + ' (' + detection.code + ')'
-    : 'Código detectado, mas ainda não cadastrado: ' + detection.code;
   const lot = parseLot(read.text);
-  const labelDate = parseLabelDate(read.text);
-
-  $('productResult').textContent =
-    'Produto: ' + description +
-    '\nLote: ' + (lot || 'aguardando leitura') +
-    '\nData: ' + (labelDate || 'não confirmada; será deixada em branco') +
-    '\n\nLeitura automática: ' + count + '/2 confirmações consecutivas.';
+  $('scanResult').textContent =
+    'Identifiquei o código ' + detection.code +
+    '\nLendo o lote e a data...' +
+    '\nConfirmando a etiqueta automaticamente.';
 }
 
 function finishProductRead(read, detection, firstRead) {
   const currentLot = parseLot(read.text);
   const currentDate = parseLabelDate(read.text);
+  const lot = firstRead && firstRead.lot && firstRead.lot === currentLot ? currentLot : '';
+  const labelDate = firstRead && firstRead.labelDate && firstRead.labelDate === currentDate ? currentDate : '';
   const currentBarcode = read.barcode || '';
-
-  // Lote, data e código de barras só são transferidos se repetirem
-  // exatamente nas duas leituras consecutivas. O código do produto
-  // também precisa repetir para avançar de etapa.
-  const lot = firstRead && firstRead.lot && firstRead.lot === currentLot
-    ? currentLot : '';
-  const labelDate = firstRead && firstRead.labelDate && firstRead.labelDate === currentDate
-    ? currentDate : '';
   const productBarcode = firstRead && firstRead.productBarcode &&
     firstRead.productBarcode === currentBarcode ? currentBarcode : '';
 
@@ -456,32 +456,16 @@ function finishProductRead(read, detection, firstRead) {
     knownProduct: detection.known
   };
 
-  $('productResult').textContent =
-    'Produto: ' + (detection.known
-      ? PRODUCTS[detection.code] + ' (' + detection.code + ')'
-      : 'código ' + detection.code + ' — não consta na lista cadastrada') +
-    '\nLote: ' + (lot || 'não identificado; confira no Recebimento') +
-    '\nData: ' + (labelDate || 'não confirmada; confira no Recebimento') +
-    '\nCódigo de barras do produto: ' + (read.barcode || 'não decodificado');
-
-  $('productTag').textContent = '1ª LEITURA CONCLUÍDA';
-  $('productTag').className = 'tag done';
-  $('productStep').classList.remove('active');
-  $('productStep').classList.add('done');
-  $('cylinderStep').classList.add('active');
-  $('cylinderTag').textContent = '2ª LEITURA AUTOMÁTICA';
-  $('cylinderResult').textContent =
-    'Agora aponte para o adesivo pequeno do cilindro. A leitura individual será automática.';
-
   setStep('cylinder');
-  updateButtons();
+  $('scanResult').textContent =
+    'Primeira etiqueta lida!\n' +
+    'Produto: ' + detection.code +
+    (detection.known ? ' — ' + PRODUCTS[detection.code] : ' — conferir no Recebimento') +
+    '\nLote: ' + (lot || 'conferir no Recebimento') +
+    '\nData: ' + (labelDate || 'conferir no Recebimento') +
+    '\n\nAgora aponte para o adesivo pequeno do cilindro.';
 
-  setStatus(
-    detection.known
-      ? 'Produto confirmado automaticamente. Agora aponte para a etiqueta individual do cilindro.'
-      : 'Código 2455 reconhecido, mas não consta entre os cinco produtos cadastrados. O produto deverá ser escolhido manualmente no Recebimento. Agora aponte para a etiqueta individual.',
-    detection.known ? 'ok' : 'error'
-  );
+  setStatus('Primeira etiqueta lida. Leia agora o adesivo individual do cilindro.', 'ok');
 }
 
 function consumeProductRead(read) {
@@ -491,17 +475,8 @@ function consumeProductRead(read) {
     productCandidate = '';
     productCandidateCount = 0;
     productCandidateRead = null;
-
-    const rawText = String(read.text || '').replace(/\s+/g, ' ').trim();
-    const preview = rawText
-      ? rawText.slice(0, 240)
-      : 'Nenhum texto foi reconhecido neste quadro.';
-
-    $('productResult').textContent =
-      'Ainda não identifiquei o código 2455/....\n' +
-      'Confiança do OCR: ' + Math.round(read.confidence || 0) + '/100\n' +
-      'Texto lido pela câmera: ' + preview +
-      '\n\nMantenha o código visível, aproxime a etiqueta para que os números fiquem maiores e aguarde a próxima leitura automática.';
+    $('scanResult').textContent =
+      'Procurando o código 2455/...\nCentralize a etiqueta maior e aproxime até os números ficarem nítidos.';
     return;
   }
 
@@ -518,33 +493,33 @@ function consumeProductRead(read) {
   }
 
   showProductProgress(read, detection, productCandidateCount);
-
   if (productCandidateCount >= 2) {
     finishProductRead(read, detection, productCandidateRead);
   }
 }
 
 function consumeCylinderRead(read) {
-  const number = extractCylinderNumber(read.text);
+  let number = extractCylinderNumber(read.text);
+  const barcodeDigits = digits(read.barcode);
+  if (!number && barcodeDigits.length >= 2 && barcodeDigits.length <= 24) {
+    number = barcodeDigits;
+  }
 
   if (!number) {
     cylinderCandidate = '';
     cylinderCandidateCount = 0;
-    $('cylinderResult').textContent =
-      'Procurando o número impresso abaixo do código de barras. Mantenha o adesivo pequeno centralizado e imóvel.';
+    $('scanResult').textContent =
+      'Procurando o número individual...\nAproxime o adesivo pequeno e deixe os números visíveis.';
     return;
   }
 
-  if (cylinderCandidate === number) {
-    cylinderCandidateCount++;
-  } else {
+  if (cylinderCandidate === number) cylinderCandidateCount++;
+  else {
     cylinderCandidate = number;
     cylinderCandidateCount = 1;
   }
 
-  $('cylinderResult').textContent =
-    'Número individual detectado: ' + number +
-    '\nConfirmando a mesma leitura: ' + cylinderCandidateCount + '/2.';
+  $('scanResult').textContent = 'Identificação encontrada. Confirmando automaticamente...';
 
   if (cylinderCandidateCount >= 2 && !autoSendStarted) {
     cylinderData = {
@@ -553,14 +528,15 @@ function consumeCylinderRead(read) {
       rawText: read.text
     };
 
-    $('cylinderTag').textContent = '2ª LEITURA CONCLUÍDA';
-    $('cylinderTag').className = 'tag done';
-    $('cylinderResult').textContent =
-      'Número individual confirmado: ' + number +
-      '\nCódigo de barras individual: ' + (read.barcode || 'não decodificado') +
-      '\nEnviando os dados ao Recebimento...';
+    $('scanTag').textContent = 'CONCLUÍDO';
+    $('scanTag').className = 'tag done';
+    $('scanHeading').textContent = 'Leitura concluída';
+    $('scanHint').textContent = 'As duas etiquetas foram identificadas.';
+    $('scanResult').textContent =
+      'Número individual: ' + number +
+      '\nEnviando os dados ao Recebimento para conferência...';
 
-    setStatus('Identificação individual confirmada automaticamente. Enviando os campos ao Recebimento.', 'ok');
+    setStatus('Segunda etiqueta lida. Enviando os dados ao Recebimento.', 'ok');
     sendToReceiving(false);
   }
 }
@@ -588,54 +564,6 @@ async function autoScanTick() {
       scanTimer = setTimeout(autoScanTick, 650);
     }
   }
-}
-
-function skipProduct() {
-  productData = {
-    productCode: '',
-    lot: '',
-    labelDate: '',
-    productBarcode: '',
-    rawText: '',
-    confirmed: true,
-    knownProduct: false
-  };
-  productCandidate = '';
-  productCandidateCount = 0;
-  productCandidateRead = null;
-  $('productResult').textContent =
-    'A primeira leitura foi pulada. Produto, lote e data deverão ser preenchidos manualmente no Recebimento.';
-  $('productStep').classList.remove('active');
-  $('productStep').classList.add('done');
-  $('productTag').textContent = '1ª ETAPA — COMPLETAR MANUALMENTE';
-  $('cylinderStep').classList.add('active');
-  $('cylinderResult').textContent =
-    'Agora aponte para o adesivo pequeno do cilindro. A leitura individual será automática.';
-  setStep('cylinder');
-  updateButtons();
-  setStatus('Etapa do produto pulada. A leitura individual automática começou.', 'ok');
-}
-
-async function retryProduct() {
-  productData = null;
-  cylinderData = null;
-  productCandidate = '';
-  productCandidateCount = 0;
-  productCandidateRead = null;
-  cylinderCandidate = '';
-  cylinderCandidateCount = 0;
-  autoSendStarted = false;
-  $('productStep').classList.add('active');
-  $('productStep').classList.remove('done');
-  $('productTag').textContent = '1ª LEITURA AUTOMÁTICA';
-  $('productResult').textContent = 'Aguardando reconhecimento automático do produto, lote e data.';
-  $('cylinderStep').classList.remove('active','done');
-  $('cylinderTag').textContent = '2ª LEITURA AUTOMÁTICA';
-  $('cylinderTag').className = 'tag';
-  $('cylinderResult').textContent = 'Aguardando a conclusão da primeira leitura.';
-  setStep('product');
-  updateButtons();
-  setStatus('Leitura reiniciada. Aponte para a etiqueta maior do fornecedor/produto.');
 }
 
 function sendToReceiving(manualCompletion) {
@@ -675,8 +603,8 @@ function sendToReceiving(manualCompletion) {
       scanTimer = null;
     }
     window.opener.postMessage(payload, returnOrigin);
-    $('sendManual').disabled = true;
-    setStatus('Dados enviados automaticamente ao Recebimento. Aguarde a confirmação e confira os campos.', 'ok');
+    $('scanResult').textContent = 'Dados enviados ao Recebimento. Confira os campos antes de registrar a operação.';
+    setStatus('Dados enviados automaticamente ao Recebimento. Confira os campos antes de registrar.', 'ok');
   } catch (error) {
     autoSendStarted = false;
     setStatus('Não foi possível enviar os dados ao Recebimento: ' + (error.message || error), 'error');
@@ -703,10 +631,7 @@ window.addEventListener('message', event => {
 });
 
 $('startButton').addEventListener('click', startCamera);
-$('stopButton').addEventListener('click', stopCamera);
-$('skipProduct').addEventListener('click', skipProduct);
-$('retryProduct').addEventListener('click', retryProduct);
-$('sendManual').addEventListener('click', () => sendToReceiving(true));
+
 
 window.addEventListener('pagehide', () => {
   stopCamera();
