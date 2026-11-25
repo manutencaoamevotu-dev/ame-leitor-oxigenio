@@ -47,7 +47,6 @@ button:disabled{opacity:.45;cursor:not-allowed}
 <video id="video" autoplay playsinline muted></video>
 <div class="actions">
   <button id="startButton" class="primary" type="button">Ativar câmera</button>
-  <button id="stopButton" class="secondary hidden" type="button">Desativar câmera</button>
 </div>
 
 <section id="scanPanel" class="step active">
@@ -123,9 +122,7 @@ function setStep(step) {
 
 function updateButtons() {
   $('startButton').classList.toggle('hidden', cameraReady);
-  $('stopButton').classList.toggle('hidden', !cameraReady);
   $('startButton').disabled = cameraReady || busy;
-  $('stopButton').disabled = !cameraReady;
 }
 
 async function prepareWorker() {
@@ -634,7 +631,6 @@ window.addEventListener('message', event => {
 });
 
 $('startButton').addEventListener('click', startCamera);
-$('stopButton').addEventListener('click', stopCamera);
 
 
 window.addEventListener('pagehide', () => {
