@@ -75,8 +75,8 @@ canvas{display:none}
 
 <p>
 Aponte para a etiqueta pequena e individual do cilindro: ela tem um código de barras e o número impresso logo abaixo.
-Exemplo do formato já cadastrado: 045686087.
-Não use a etiqueta maior do fornecedor/produto, que informa lote e código do produto.
+O número individual pode variar de um cilindro para outro; não há um tamanho fixo obrigatório.
+Não use a etiqueta maior do fornecedor/produto. Os códigos iniciados por 2455/ identificam o tipo do produto, não o cilindro.
 O sistema fará a leitura numérica continuamente e procurará a identificação individual no Cadastro Mestre.
 </p>
 
@@ -297,45 +297,47 @@ function captureFrame() {
 }
 
 function extractIndividualNumber(text) {
-  const lines = String(text || '')
+  const original = String(text || '');
+
+  // Códigos 2455/... identificam o tipo do produto. Retira esse padrão
+  // antes de procurar o número individual do cilindro.
+  const source = original.replace(/\b2455\s*\/\s*[\d\s.,;:_-]+/gi, ' ');
+
+  const lines = source
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean);
   const candidates = new Set();
 
-  // Primeiro, procura uma sequência contínua de 8 a 12 dígitos.
   for (const line of lines) {
-    const direct = line.match(/\d{8,12}/g) || [];
-    direct.forEach(value => candidates.add(value));
-
-    // O OCR pode separar o número em grupos, por exemplo 045 686 087.
+    // Quando a linha contém somente números e separadores, junta os grupos.
+    // Isso permite ler, por exemplo, "045 686 087", sem fixar o tamanho do ID.
     if (/^[\d\s.,;:_-]+$/.test(line)) {
       const joined = line.replace(/\D/g, '');
-      if (joined.length >= 8 && joined.length <= 12) {
-        candidates.add(joined);
-      }
+      if (joined.length >= 4) candidates.add(joined);
+      continue;
     }
+
+    // Em linhas com texto, considera sequências numéricas inteiras.
+    // O tamanho pode variar: a confirmação final é feita pelo Cadastro Mestre.
+    const direct = line.match(/\d{4,}/g) || [];
+    direct.forEach(value => candidates.add(value));
   }
 
-  // Em alguns aparelhos, o Tesseract quebra uma sequência em duas ou três
-  // linhas. Só junta linhas compostas exclusivamente por números e separadores.
+  // O Tesseract pode quebrar o mesmo número em linhas consecutivas.
+  // Junta apenas blocos formados exclusivamente por dígitos/separadores.
   for (let start = 0; start < lines.length; start++) {
-    for (let count = 2; count <= 3 && start + count <= lines.length; count++) {
+    for (let count = 2; count <= 4 && start + count <= lines.length; count++) {
       const block = lines.slice(start, start + count);
       if (!block.every(line => /^[\d\s.,;:_-]+$/.test(line))) continue;
       const joined = block.join('').replace(/\D/g, '');
-      if (joined.length >= 8 && joined.length <= 12) {
-        candidates.add(joined);
-      }
+      if (joined.length >= 4) candidates.add(joined);
     }
   }
 
-  // A etiqueta de referência enviada pelo AME mostra 9 dígitos
-  // (exemplo: 045686087). Quando houver um único candidato nesse formato,
-  // ele tem prioridade sobre números longos de lote/produto vistos ao fundo.
-  const nineDigits = [...candidates].filter(value => value.length === 9);
-  if (nineDigits.length === 1) return nineDigits[0];
-
+  // Não existe prioridade para 9 dígitos: o número individual pode variar.
+  // Só envia uma leitura quando houver um único candidato, evitando escolher
+  // arbitrariamente entre número do cilindro, lote ou outras sequências.
   return candidates.size === 1 ? [...candidates][0] : '';
 }
 
