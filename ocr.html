@@ -139,8 +139,11 @@ async function prepareWorker() {
   setStatus('Preparando o mecanismo de reconhecimento...');
   worker = await Tesseract.createWorker('por+eng', 1, {
     logger: info => {
-      if (info?.status === 'recognizing text' && typeof info.progress === 'number') {
-        setStatus('Reconhecendo a etiqueta... ' + Math.round(info.progress * 100) + '%');
+      // O percentual do Tesseract indica apenas o fim do processamento do
+      // quadro, não a precisão nem a identificação da etiqueta. Não o exibimos
+      // como se fosse uma leitura concluída.
+      if (info?.status === 'loading language traineddata') {
+        setStatus('Preparando o reconhecimento de texto...');
       }
     }
   });
@@ -278,18 +281,39 @@ function parseProductCode(text) {
 }
 
 function detectProductCode(text) {
-  const knownCode = parseProductCode(text);
+  const raw = String(text || '');
+  const knownCode = parseProductCode(raw);
   if (knownCode) return { code: knownCode, known: true };
 
-  const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const candidates = new Set();
 
+  // Procura o marcador 2455 também quando o número do produto foi
+  // quebrado entre linhas pelo OCR ou separado por espaços/pontuação.
   for (let i = 0; i < lines.length; i++) {
-    if (!/2455/.test(digits(lines[i]))) continue;
-    const nearby = digits(lines[i] + ' ' + (lines[i + 1] || ''));
-    const marker = nearby.indexOf('2455');
-    const suffix = marker >= 0 ? nearby.slice(marker + 4) : '';
-    if (suffix.length >= 8) candidates.add('2455/' + suffix.slice(0, 8));
+    const normalizedLine = digits(lines[i]);
+    const marker = normalizedLine.indexOf('2455');
+    if (marker < 0) continue;
+
+    const nearby = digits(lines.slice(i, i + 3).join(' '));
+    const nearbyMarker = nearby.indexOf('2455');
+    const suffix = nearbyMarker >= 0
+      ? nearby.slice(nearbyMarker + 4, nearbyMarker + 12)
+      : '';
+
+    if (/^\d{8}$/.test(suffix)) {
+      candidates.add('2455/' + suffix);
+    }
+  }
+
+  // Segunda busca sobre todo o texto compactado. Isso cobre casos em que
+  // o Tesseract devolve o código em uma única linha ou sem preservar quebras.
+  const compact = digits(raw);
+  let position = compact.indexOf('2455');
+  while (position >= 0) {
+    const suffix = compact.slice(position + 4, position + 12);
+    if (/^\d{8}$/.test(suffix)) candidates.add('2455/' + suffix);
+    position = compact.indexOf('2455', position + 4);
   }
 
   return candidates.size === 1
@@ -467,8 +491,17 @@ function consumeProductRead(read) {
     productCandidate = '';
     productCandidateCount = 0;
     productCandidateRead = null;
+
+    const rawText = String(read.text || '').replace(/\s+/g, ' ').trim();
+    const preview = rawText
+      ? rawText.slice(0, 240)
+      : 'Nenhum texto foi reconhecido neste quadro.';
+
     $('productResult').textContent =
-      'Procurando o código 2455/..., o lote e a data. Mantenha a etiqueta maior centralizada e imóvel por alguns instantes.';
+      'Ainda não identifiquei o código 2455/....\n' +
+      'Confiança do OCR: ' + Math.round(read.confidence || 0) + '/100\n' +
+      'Texto lido pela câmera: ' + preview +
+      '\n\nMantenha o código visível, aproxime a etiqueta para que os números fiquem maiores e aguarde a próxima leitura automática.';
     return;
   }
 
