@@ -319,23 +319,9 @@ async function recognizeFrame() {
   try {
     const result = await worker.recognize(frame);
 
-    let text = String(
+    const text = String(
       result && result.data && result.data.text || ''
     ).trim();
-
-    // Em navegadores compatíveis, tenta decodificar o código de barras
-    // além de reconhecer os caracteres impressos.
-    if (barcodeDetector) {
-      try {
-        const detected = await barcodeDetector.detect(frame);
-        const values = detected
-          .map(item => String(item.rawValue || '').trim())
-          .filter(Boolean);
-        if (values.length) text = [text, ...values].filter(Boolean).join('\n');
-      } catch (error) {
-        // A falha no decodificador não interrompe o OCR.
-      }
-    }
 
     if (!text) {
       status(
