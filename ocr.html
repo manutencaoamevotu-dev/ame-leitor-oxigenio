@@ -43,7 +43,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 
 <p>São duas leituras diferentes para cada cilindro recebido. Primeiro, a etiqueta maior do fornecedor/produto (código iniciado por <b>2455/</b>, lote e data). Depois, o adesivo pequeno com código de barras e número individual do cilindro. O número individual pode variar: não existe um tamanho fixo obrigatório.</p>
 
-<div id="status" class="status">Abra pelo formulário de Recebimento e inicie a câmera.</div>
+<div id="status" class="status">Abra pelo formulário de Recebimento e toque em “Iniciar câmera”. Depois disso, a leitura será automática.</div>
 <video id="video" autoplay playsinline muted></video>
 <div class="actions">
   <button id="startButton" class="primary" type="button">Iniciar câmera</button>
@@ -51,28 +51,23 @@ button:disabled{opacity:.45;cursor:not-allowed}
 </div>
 
 <section id="productStep" class="step active">
-  <span id="productTag" class="tag">1ª LEITURA</span>
+  <span id="productTag" class="tag">1ª LEITURA AUTOMÁTICA</span>
   <h2>Etiqueta do fornecedor / produto</h2>
-  <p class="hint">Enquadre a etiqueta maior, deixando visíveis o código 2455/..., o lote e a data.</p>
-  <div id="productResult" class="result">Aguardando leitura do produto, lote e data.</div>
+  <p class="hint">Aponte para a etiqueta maior e mantenha o celular firme. O leitor procura continuamente o código 2455/..., o lote e uma data válida. Não precisa fotografar nem tocar em capturar.</p>
+  <div id="productResult" class="result">Aguardando a câmera reconhecer a etiqueta do produto...</div>
   <div class="actions">
-    <button id="captureProduct" class="primary" type="button" disabled>Capturar etiqueta do produto</button>
-    <button id="retryProduct" class="secondary" type="button" disabled>Refazer leitura do produto</button>
-    <button id="continueProduct" class="secondary" type="button" disabled>Confirmar e ir para a etiqueta individual</button>
-    <button id="skipProduct" class="secondary" type="button" disabled>Continuar sem leitura do produto</button>
+    <button id="skipProduct" class="secondary" type="button" disabled>Pular esta leitura e completar manualmente</button>
   </div>
 </section>
 
 <section id="cylinderStep" class="step">
-  <span id="cylinderTag" class="tag">2ª LEITURA</span>
+  <span id="cylinderTag" class="tag">2ª LEITURA AUTOMÁTICA</span>
   <h2>Etiqueta individual do cilindro</h2>
-  <p class="hint">Agora aproxime a câmera do adesivo pequeno. Leia o número impresso abaixo do código de barras. Não use o código 2455/... como identificação do cilindro.</p>
-  <div id="cylinderResult" class="result">Aguardando a conclusão da primeira leitura.</div>
+  <p class="hint">Produto reconhecido. Agora aponte para o adesivo pequeno e mantenha o número impresso abaixo do código de barras visível. O sistema fará a leitura contínua e enviará os campos ao Recebimento quando confirmar o mesmo número em leituras seguidas.</p>
+  <div id="cylinderResult" class="result">Aguardando a identificação individual do cilindro...</div>
   <div class="actions">
-    <button id="captureCylinder" class="primary" type="button" disabled>Capturar identificação do cilindro</button>
-    <button id="retryCylinder" class="secondary" type="button" disabled>Refazer leitura individual</button>
-    <button id="sendAll" class="primary" type="button" disabled>Confirmar as duas leituras e enviar</button>
-    <button id="sendPartial" class="secondary" type="button" disabled>Enviar dados parciais para completar manualmente</button>
+    <button id="retryProduct" class="secondary" type="button" disabled>Voltar e refazer a leitura do produto</button>
+    <button id="sendManual" class="secondary" type="button" disabled>Enviar para completar manualmente no Recebimento</button>
   </div>
 </section>
 
@@ -110,6 +105,14 @@ let busy = false;
 let productData = null;
 let cylinderData = null;
 let cameraReady = false;
+let scanLoopActive = false;
+let scanTimer = null;
+let productCandidate = '';
+let productCandidateCount = 0;
+let productCandidateRead = null;
+let cylinderCandidate = '';
+let cylinderCandidateCount = 0;
+let autoSendStarted = false;
 
 function setStatus(message, type) {
   $('status').textContent = message;
@@ -124,15 +127,9 @@ function setStep(step) {
 }
 
 function updateButtons() {
-  const enabled = cameraReady && !busy;
-  $('captureProduct').disabled = !enabled || Boolean(productData && productData.confirmed);
-  $('retryProduct').disabled = !cameraReady || busy || !productData;
-  $('continueProduct').disabled = !cameraReady || busy || !productData;
-  $('skipProduct').disabled = !cameraReady || busy;
-  $('captureCylinder').disabled = !cameraReady || busy || !productData?.confirmed;
-  $('retryCylinder').disabled = !cameraReady || busy || !cylinderData;
-  $('sendAll').disabled = !cameraReady || busy || !productData?.confirmed || !cylinderData?.cylinderNumber;
-  $('sendPartial').disabled = !cameraReady || busy || !productData?.confirmed;
+  $('skipProduct').disabled = !cameraReady || busy || Boolean(productData && productData.confirmed);
+  $('retryProduct').disabled = !cameraReady || busy || !productData?.confirmed;
+  $('sendManual').disabled = !cameraReady || busy || !productData?.confirmed || autoSendStarted;
   $('stopButton').disabled = !cameraReady;
 }
 
@@ -164,7 +161,7 @@ async function startCamera() {
     $('startButton').disabled = true;
     stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
     });
     video.srcObject = stream;
     await video.play();
@@ -180,8 +177,9 @@ async function startCamera() {
     cameraReady = true;
     $('startButton').disabled = true;
     updateButtons();
-    setStatus('Câmera ativa. Comece pela 1ª leitura: etiqueta do fornecedor/produto.', 'ok');
+    setStatus('Câmera ativa. A leitura automática começou: aponte para a etiqueta maior e mantenha o celular firme.', 'ok');
     setStep('product');
+    beginAutoScan();
   } catch (error) {
     stopCamera();
     $('startButton').disabled = false;
@@ -191,6 +189,11 @@ async function startCamera() {
 
 function stopCamera() {
   cameraReady = false;
+  scanLoopActive = false;
+  if (scanTimer) {
+    clearTimeout(scanTimer);
+    scanTimer = null;
+  }
   if (stream) {
     stream.getTracks().forEach(track => track.stop());
     stream = null;
@@ -202,15 +205,21 @@ function stopCamera() {
 
 function captureCanvas() {
   if (!video.videoWidth || !video.videoHeight) throw new Error('Aguarde a imagem da câmera aparecer.');
-  const scale = 1.7;
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  const cropWidth = Math.round(sourceWidth * 0.94);
+  const cropHeight = Math.round(sourceHeight * 0.94);
+  const sx = Math.round((sourceWidth - cropWidth) / 2);
+  const sy = Math.round((sourceHeight - cropHeight) / 2);
+  const scale = 2;
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.width = Math.round(cropWidth * scale);
+  canvas.height = Math.round(cropHeight * scale);
   const context = canvas.getContext('2d', { willReadFrequently: true });
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  context.filter = 'grayscale(1) contrast(1.25) brightness(1.08)';
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  context.filter = 'grayscale(1) contrast(1.35) brightness(1.08)';
+  context.drawImage(video, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
   context.filter = 'none';
   return canvas;
 }
@@ -247,7 +256,11 @@ async function recognize(kind) {
     });
     const result = await worker.recognize(canvas);
     const barcode = await barcodePromise;
-    return { text: String(result?.data?.text || '').trim(), barcode };
+    return {
+      text: String(result?.data?.text || '').trim(),
+      barcode,
+      confidence: Number(result?.data?.confidence || 0)
+    };
   } finally {
     busy = false;
     updateButtons();
@@ -262,6 +275,26 @@ function parseProductCode(text) {
   const allDigits = digits(text);
   const found = Object.keys(PRODUCTS).filter(code => allDigits.includes(digits(code)));
   return found.length === 1 ? found[0] : '';
+}
+
+function detectProductCode(text) {
+  const knownCode = parseProductCode(text);
+  if (knownCode) return { code: knownCode, known: true };
+
+  const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const candidates = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/2455/.test(digits(lines[i]))) continue;
+    const nearby = digits(lines[i] + ' ' + (lines[i + 1] || ''));
+    const marker = nearby.indexOf('2455');
+    const suffix = marker >= 0 ? nearby.slice(marker + 4) : '';
+    if (suffix.length >= 8) candidates.add('2455/' + suffix.slice(0, 8));
+  }
+
+  return candidates.size === 1
+    ? { code: [...candidates][0], known: false }
+    : null;
 }
 
 function parseLot(text) {
@@ -281,12 +314,35 @@ function parseLot(text) {
 }
 
 function parseLabelDate(text) {
-  const match = String(text || '').match(/\b(\d{1,2}[/. -]\d{1,2}[/. -]\d{4}|\d{4}-\d{2}-\d{2})\b/);
-  if (!match) return '';
-  const parts = match[1].replace(/[. -]/g, '/').split('/');
-  if (parts.length !== 3) return '';
-  if (parts[0].length === 4) return parts[2].padStart(2,'0') + '/' + parts[1].padStart(2,'0') + '/' + parts[0];
-  return parts[0].padStart(2,'0') + '/' + parts[1].padStart(2,'0') + '/' + parts[2];
+  const candidates = String(text || '').match(/\b(?:\d{1,2}[/. -]\d{1,2}[/. -]\d{4}|\d{4}-\d{2}-\d{2})\b/g) || [];
+
+  for (const candidate of candidates) {
+    const parts = candidate.replace(/[. -]/g, '/').split('/');
+    if (parts.length !== 3) continue;
+
+    let day, month, year;
+    if (parts[0].length === 4) {
+      year = Number(parts[0]);
+      month = Number(parts[1]);
+      day = Number(parts[2]);
+    } else {
+      day = Number(parts[0]);
+      month = Number(parts[1]);
+      year = Number(parts[2]);
+    }
+
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) continue;
+    const check = new Date(Date.UTC(year, month - 1, day));
+    if (
+      check.getUTCFullYear() !== year ||
+      check.getUTCMonth() !== month - 1 ||
+      check.getUTCDate() !== day
+    ) continue;
+
+    return String(day).padStart(2, '0') + '/' +
+      String(month).padStart(2, '0') + '/' + String(year);
+  }
+  return '';
 }
 
 function extractCylinderNumber(text) {
@@ -298,8 +354,9 @@ function extractCylinderNumber(text) {
   while (index < lines.length) {
     const line = lines[index];
 
-    // Não utiliza lote nem código de produto como identificação individual.
-    if (/\bLOTE\b|\bLOT\b|\bBATCH\b|\b2455\s*\//i.test(line)) {
+    // Não utiliza lote, datas nem qualquer código iniciado por 2455
+    // como identificação individual do cilindro.
+    if (/\bLOTE\b|\bLOT\b|\bBATCH\b|2455/i.test(line) || /\b\d{1,2}[/. -]\d{1,2}[/. -]\d{4}\b/.test(line)) {
       index++;
       continue;
     }
@@ -336,62 +393,168 @@ function extractCylinderNumber(text) {
   // Comprimento variável: só envia quando há uma única leitura possível.
   return candidates.size === 1 ? [...candidates][0] : '';
 }
-async function captureProduct() {
-  if (busy || !cameraReady) return;
-  try {
-    const read = await recognize('product');
-    const productCode = parseProductCode(read.text);
-    const lot = parseLot(read.text);
-    const labelDate = parseLabelDate(read.text);
-    productData = {
-      productCode,
-      lot,
-      labelDate,
-      productBarcode: read.barcode,
-      rawText: read.text,
-      confirmed: false
-    };
-    const description = productCode ? PRODUCTS[productCode] + ' (' + productCode + ')' : 'não identificado';
+function showProductProgress(read, detection, count) {
+  const description = detection.known
+    ? PRODUCTS[detection.code] + ' (' + detection.code + ')'
+    : 'Código detectado, mas ainda não cadastrado: ' + detection.code;
+  const lot = parseLot(read.text);
+  const labelDate = parseLabelDate(read.text);
+
+  $('productResult').textContent =
+    'Produto: ' + description +
+    '\nLote: ' + (lot || 'aguardando leitura') +
+    '\nData: ' + (labelDate || 'não confirmada; será deixada em branco') +
+    '\n\nLeitura automática: ' + count + '/2 confirmações consecutivas.';
+}
+
+function finishProductRead(read, detection, firstRead) {
+  const currentLot = parseLot(read.text);
+  const currentDate = parseLabelDate(read.text);
+  const currentBarcode = read.barcode || '';
+
+  // Lote, data e código de barras só são transferidos se repetirem
+  // exatamente nas duas leituras consecutivas. O código do produto
+  // também precisa repetir para avançar de etapa.
+  const lot = firstRead && firstRead.lot && firstRead.lot === currentLot
+    ? currentLot : '';
+  const labelDate = firstRead && firstRead.labelDate && firstRead.labelDate === currentDate
+    ? currentDate : '';
+  const productBarcode = firstRead && firstRead.productBarcode &&
+    firstRead.productBarcode === currentBarcode ? currentBarcode : '';
+
+  productData = {
+    productCode: detection.code,
+    lot,
+    labelDate,
+    productBarcode,
+    rawText: read.text,
+    confirmed: true,
+    knownProduct: detection.known
+  };
+
+  $('productResult').textContent =
+    'Produto: ' + (detection.known
+      ? PRODUCTS[detection.code] + ' (' + detection.code + ')'
+      : 'código ' + detection.code + ' — não consta na lista cadastrada') +
+    '\nLote: ' + (lot || 'não identificado; confira no Recebimento') +
+    '\nData: ' + (labelDate || 'não confirmada; confira no Recebimento') +
+    '\nCódigo de barras do produto: ' + (read.barcode || 'não decodificado');
+
+  $('productTag').textContent = '1ª LEITURA CONCLUÍDA';
+  $('productTag').className = 'tag done';
+  $('productStep').classList.remove('active');
+  $('productStep').classList.add('done');
+  $('cylinderStep').classList.add('active');
+  $('cylinderTag').textContent = '2ª LEITURA AUTOMÁTICA';
+  $('cylinderResult').textContent =
+    'Agora aponte para o adesivo pequeno do cilindro. A leitura individual será automática.';
+
+  setStep('cylinder');
+  updateButtons();
+
+  setStatus(
+    detection.known
+      ? 'Produto confirmado automaticamente. Agora aponte para a etiqueta individual do cilindro.'
+      : 'Código 2455 reconhecido, mas não consta entre os cinco produtos cadastrados. O produto deverá ser escolhido manualmente no Recebimento. Agora aponte para a etiqueta individual.',
+    detection.known ? 'ok' : 'error'
+  );
+}
+
+function consumeProductRead(read) {
+  const detection = detectProductCode(read.text);
+
+  if (!detection) {
+    productCandidate = '';
+    productCandidateCount = 0;
+    productCandidateRead = null;
     $('productResult').textContent =
-      'Produto: ' + description +
-      '\nLote: ' + (lot || 'não identificado') +
-      '\nData: ' + (labelDate || 'não identificada') +
-      '\nCódigo de barras do produto: ' + (read.barcode || 'não decodificado') +
-      (read.text ? '\n\nTexto reconhecido:\n' + read.text : '');
-    if (productCode) {
-      $('productTag').textContent = '1ª LEITURA CAPTURADA';
-      $('productTag').className = 'tag done';
-      $('continueProduct').disabled = false;
-      $('skipProduct').disabled = true;
-      setStatus(lot ? 'Código do produto identificado. Confira os dados e confirme para passar à etiqueta individual.' :
-        'Código do produto identificado, mas o lote não foi lido. Você poderá preenchê-lo manualmente no recebimento.', 'ok');
-    } else {
-      $('continueProduct').disabled = true;
-      $('skipProduct').disabled = false;
-      setStatus('Não consegui reconhecer um dos cinco códigos de produto cadastrados. Refaça a leitura ou continue e selecione o produto manualmente no recebimento.', 'error');
-    }
-    updateButtons();
-  } catch (error) {
-    setStatus('Falha na leitura da etiqueta do produto: ' + (error.message || error), 'error');
-  } finally {
-    updateButtons();
+      'Procurando o código 2455/..., o lote e a data. Mantenha a etiqueta maior centralizada e imóvel por alguns instantes.';
+    return;
+  }
+
+  if (productCandidate === detection.code) {
+    productCandidateCount++;
+  } else {
+    productCandidate = detection.code;
+    productCandidateCount = 1;
+    productCandidateRead = {
+      lot: parseLot(read.text),
+      labelDate: parseLabelDate(read.text),
+      productBarcode: read.barcode || ''
+    };
+  }
+
+  showProductProgress(read, detection, productCandidateCount);
+
+  if (productCandidateCount >= 2) {
+    finishProductRead(read, detection, productCandidateRead);
   }
 }
 
-function confirmProduct() {
-  if (!productData?.productCode) return;
-  productData.confirmed = true;
-  $('productStep').classList.remove('active');
-  $('productStep').classList.add('done');
-  $('continueProduct').disabled = true;
-  $('skipProduct').disabled = true;
-  $('captureProduct').disabled = true;
-  $('cylinderResult').textContent = 'Agora enquadre o adesivo pequeno do cilindro e faça a segunda leitura.';
-  $('cylinderStep').classList.add('active');
-  $('cylinderTag').textContent = '2ª LEITURA';
-  setStep('cylinder');
-  updateButtons();
-  setStatus('Primeira leitura confirmada. Agora leia a etiqueta individual do cilindro.', 'ok');
+function consumeCylinderRead(read) {
+  const number = extractCylinderNumber(read.text);
+
+  if (!number) {
+    cylinderCandidate = '';
+    cylinderCandidateCount = 0;
+    $('cylinderResult').textContent =
+      'Procurando o número impresso abaixo do código de barras. Mantenha o adesivo pequeno centralizado e imóvel.';
+    return;
+  }
+
+  if (cylinderCandidate === number) {
+    cylinderCandidateCount++;
+  } else {
+    cylinderCandidate = number;
+    cylinderCandidateCount = 1;
+  }
+
+  $('cylinderResult').textContent =
+    'Número individual detectado: ' + number +
+    '\nConfirmando a mesma leitura: ' + cylinderCandidateCount + '/2.';
+
+  if (cylinderCandidateCount >= 2 && !autoSendStarted) {
+    cylinderData = {
+      cylinderNumber: number,
+      cylinderBarcode: read.barcode || '',
+      rawText: read.text
+    };
+
+    $('cylinderTag').textContent = '2ª LEITURA CONCLUÍDA';
+    $('cylinderTag').className = 'tag done';
+    $('cylinderResult').textContent =
+      'Número individual confirmado: ' + number +
+      '\nCódigo de barras individual: ' + (read.barcode || 'não decodificado') +
+      '\nEnviando os dados ao Recebimento...';
+
+    setStatus('Identificação individual confirmada automaticamente. Enviando os campos ao Recebimento.', 'ok');
+    sendToReceiving(false);
+  }
+}
+
+function beginAutoScan() {
+  if (!cameraReady || scanLoopActive) return;
+  scanLoopActive = true;
+  scanTimer = setTimeout(autoScanTick, 350);
+}
+
+async function autoScanTick() {
+  if (!scanLoopActive || !cameraReady || autoSendStarted) return;
+
+  try {
+    const kind = productData?.confirmed ? 'cylinder' : 'product';
+    const read = await recognize(kind);
+    if (read) {
+      if (kind === 'product') consumeProductRead(read);
+      else consumeCylinderRead(read);
+    }
+  } catch (error) {
+    setStatus('Falha na leitura automática: ' + (error.message || error), 'error');
+  } finally {
+    if (scanLoopActive && cameraReady && !autoSendStarted) {
+      scanTimer = setTimeout(autoScanTick, 650);
+    }
+  }
 }
 
 function skipProduct() {
@@ -401,76 +564,49 @@ function skipProduct() {
     labelDate: '',
     productBarcode: '',
     rawText: '',
-    confirmed: true
+    confirmed: true,
+    knownProduct: false
   };
-  $('productResult').textContent = 'Leitura do produto não concluída. Produto, lote e data deverão ser conferidos/preenchidos manualmente no recebimento.';
+  productCandidate = '';
+  productCandidateCount = 0;
+  productCandidateRead = null;
+  $('productResult').textContent =
+    'A primeira leitura foi pulada. Produto, lote e data deverão ser preenchidos manualmente no Recebimento.';
   $('productStep').classList.remove('active');
   $('productStep').classList.add('done');
-  $('productTag').textContent = '1ª ETAPA — PREENCHER MANUALMENTE';
+  $('productTag').textContent = '1ª ETAPA — COMPLETAR MANUALMENTE';
   $('cylinderStep').classList.add('active');
-  $('cylinderResult').textContent = 'Agora enquadre o adesivo pequeno do cilindro.';
+  $('cylinderResult').textContent =
+    'Agora aponte para o adesivo pequeno do cilindro. A leitura individual será automática.';
   setStep('cylinder');
   updateButtons();
-  setStatus('Pode fazer a segunda leitura. O produto e o lote ficarão para preenchimento manual.', 'ok');
-}
-
-async function captureCylinder() {
-  if (busy || !cameraReady || !productData?.confirmed) return;
-  try {
-    const read = await recognize('cylinder');
-    const number = extractCylinderNumber(read.text);
-    cylinderData = {
-      cylinderNumber: number,
-      cylinderBarcode: read.barcode,
-      rawText: read.text
-    };
-    $('cylinderResult').textContent =
-      'Número individual do cilindro: ' + (number || 'não identificado') +
-      '\nCódigo de barras individual: ' + (read.barcode || 'não decodificado') +
-      (read.text ? '\n\nDígitos reconhecidos:\n' + read.text : '');
-    if (number) {
-      $('cylinderTag').textContent = '2ª LEITURA CAPTURADA';
-      $('cylinderTag').className = 'tag done';
-      $('sendAll').disabled = false;
-      setStatus('Número individual identificado. Confira as duas leituras e envie ao recebimento.', 'ok');
-    } else {
-      $('sendAll').disabled = true;
-      setStatus('Não consegui confirmar um número individual único. Refazer a leitura com o adesivo pequeno centralizado ou enviar os dados parciais para completar manualmente.', 'error');
-    }
-    updateButtons();
-  } catch (error) {
-    setStatus('Falha na leitura da identificação individual: ' + (error.message || error), 'error');
-  } finally {
-    updateButtons();
-  }
+  setStatus('Etapa do produto pulada. A leitura individual automática começou.', 'ok');
 }
 
 async function retryProduct() {
   productData = null;
   cylinderData = null;
+  productCandidate = '';
+  productCandidateCount = 0;
+  productCandidateRead = null;
+  cylinderCandidate = '';
+  cylinderCandidateCount = 0;
+  autoSendStarted = false;
   $('productStep').classList.add('active');
   $('productStep').classList.remove('done');
-  $('productTag').textContent = '1ª LEITURA';
-  $('productResult').textContent = 'Aguardando nova leitura do produto, lote e data.';
+  $('productTag').textContent = '1ª LEITURA AUTOMÁTICA';
+  $('productResult').textContent = 'Aguardando reconhecimento automático do produto, lote e data.';
   $('cylinderStep').classList.remove('active','done');
-  $('cylinderTag').textContent = '2ª LEITURA';
+  $('cylinderTag').textContent = '2ª LEITURA AUTOMÁTICA';
   $('cylinderTag').className = 'tag';
   $('cylinderResult').textContent = 'Aguardando a conclusão da primeira leitura.';
   setStep('product');
   updateButtons();
-  setStatus('Refaça a primeira leitura da etiqueta do fornecedor/produto.');
-}
-
-async function retryCylinder() {
-  cylinderData = null;
-  $('cylinderTag').textContent = '2ª LEITURA';
-  $('cylinderTag').className = 'tag';
-  $('cylinderResult').textContent = 'Aguardando nova leitura da identificação individual.';
-  updateButtons();
-  setStatus('Refaça a segunda leitura do adesivo pequeno do cilindro.');
+  setStatus('Leitura reiniciada. Aponte para a etiqueta maior do fornecedor/produto.');
 }
 
 function sendToReceiving(manualCompletion) {
+  if (autoSendStarted && !manualCompletion) return;
   if (!productData?.confirmed) {
     setStatus('Conclua ou pule a primeira etapa antes de enviar.', 'error');
     return;
@@ -499,12 +635,19 @@ function sendToReceiving(manualCompletion) {
   };
 
   try {
+    autoSendStarted = true;
+    scanLoopActive = false;
+    if (scanTimer) {
+      clearTimeout(scanTimer);
+      scanTimer = null;
+    }
     window.opener.postMessage(payload, returnOrigin);
-    $('sendAll').disabled = true;
-    $('sendPartial').disabled = true;
-    setStatus('Dados das duas etapas enviados. Confira o formulário de recebimento e aguarde a confirmação.', 'ok');
+    $('sendManual').disabled = true;
+    setStatus('Dados enviados automaticamente ao Recebimento. Aguarde a confirmação e confira os campos.', 'ok');
   } catch (error) {
-    setStatus('Não foi possível enviar os dados ao recebimento: ' + (error.message || error), 'error');
+    autoSendStarted = false;
+    setStatus('Não foi possível enviar os dados ao Recebimento: ' + (error.message || error), 'error');
+    beginAutoScan();
   }
 }
 
@@ -516,24 +659,21 @@ window.addEventListener('message', event => {
     $('finalStatus').textContent = 'Leitura concluída. Os campos foram transferidos para o formulário. Confira os dados antes de registrar o recebimento.';
     $('finalStatus').className = 'status ok';
     $('finalStatus').classList.remove('hidden');
-    setStatus('Recebimento confirmou a transferência dos dados.', 'ok');
+    setStatus('Recebimento confirmou a transferência dos dados. Confira os campos antes de registrar a operação.', 'ok');
+    stopCamera();
   } else {
-    setStatus(data.message || 'O formulário não confirmou os dados. Confira o recebimento e tente novamente.', 'error');
-    $('sendAll').disabled = false;
-    $('sendPartial').disabled = false;
+    autoSendStarted = false;
+    setStatus(data.message || 'O formulário não confirmou os dados. Confira o Recebimento e tente novamente.', 'error');
+    beginAutoScan();
+    updateButtons();
   }
 });
 
 $('startButton').addEventListener('click', startCamera);
 $('stopButton').addEventListener('click', stopCamera);
-$('captureProduct').addEventListener('click', captureProduct);
-$('retryProduct').addEventListener('click', retryProduct);
-$('continueProduct').addEventListener('click', confirmProduct);
 $('skipProduct').addEventListener('click', skipProduct);
-$('captureCylinder').addEventListener('click', captureCylinder);
-$('retryCylinder').addEventListener('click', retryCylinder);
-$('sendAll').addEventListener('click', () => sendToReceiving(false));
-$('sendPartial').addEventListener('click', () => sendToReceiving(true));
+$('retryProduct').addEventListener('click', retryProduct);
+$('sendManual').addEventListener('click', () => sendToReceiving(true));
 
 window.addEventListener('pagehide', () => {
   stopCamera();
