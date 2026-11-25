@@ -109,6 +109,7 @@ let scanLoopActive = false;
 let scanTimer = null;
 let productCandidate = '';
 let productCandidateCount = 0;
+let productCandidateRead = null;
 let cylinderCandidate = '';
 let cylinderCandidateCount = 0;
 let autoSendStarted = false;
@@ -406,15 +407,26 @@ function showProductProgress(read, detection, count) {
     '\n\nLeitura automática: ' + count + '/2 confirmações consecutivas.';
 }
 
-function finishProductRead(read, detection) {
-  const lot = parseLot(read.text);
-  const labelDate = parseLabelDate(read.text);
+function finishProductRead(read, detection, firstRead) {
+  const currentLot = parseLot(read.text);
+  const currentDate = parseLabelDate(read.text);
+  const currentBarcode = read.barcode || '';
+
+  // Lote, data e código de barras só são transferidos se repetirem
+  // exatamente nas duas leituras consecutivas. O código do produto
+  // também precisa repetir para avançar de etapa.
+  const lot = firstRead && firstRead.lot && firstRead.lot === currentLot
+    ? currentLot : '';
+  const labelDate = firstRead && firstRead.labelDate && firstRead.labelDate === currentDate
+    ? currentDate : '';
+  const productBarcode = firstRead && firstRead.productBarcode &&
+    firstRead.productBarcode === currentBarcode ? currentBarcode : '';
 
   productData = {
     productCode: detection.code,
     lot,
     labelDate,
-    productBarcode: read.barcode || '',
+    productBarcode,
     rawText: read.text,
     confirmed: true,
     knownProduct: detection.known
@@ -454,6 +466,7 @@ function consumeProductRead(read) {
   if (!detection) {
     productCandidate = '';
     productCandidateCount = 0;
+    productCandidateRead = null;
     $('productResult').textContent =
       'Procurando o código 2455/..., o lote e a data. Mantenha a etiqueta maior centralizada e imóvel por alguns instantes.';
     return;
@@ -464,12 +477,17 @@ function consumeProductRead(read) {
   } else {
     productCandidate = detection.code;
     productCandidateCount = 1;
+    productCandidateRead = {
+      lot: parseLot(read.text),
+      labelDate: parseLabelDate(read.text),
+      productBarcode: read.barcode || ''
+    };
   }
 
   showProductProgress(read, detection, productCandidateCount);
 
   if (productCandidateCount >= 2) {
-    finishProductRead(read, detection);
+    finishProductRead(read, detection, productCandidateRead);
   }
 }
 
@@ -551,6 +569,7 @@ function skipProduct() {
   };
   productCandidate = '';
   productCandidateCount = 0;
+  productCandidateRead = null;
   $('productResult').textContent =
     'A primeira leitura foi pulada. Produto, lote e data deverão ser preenchidos manualmente no Recebimento.';
   $('productStep').classList.remove('active');
@@ -569,6 +588,7 @@ async function retryProduct() {
   cylinderData = null;
   productCandidate = '';
   productCandidateCount = 0;
+  productCandidateRead = null;
   cylinderCandidate = '';
   cylinderCandidateCount = 0;
   autoSendStarted = false;
