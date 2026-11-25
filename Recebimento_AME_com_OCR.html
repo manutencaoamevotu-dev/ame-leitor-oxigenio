@@ -402,34 +402,91 @@ function scanLabel(itemId) {
   if (!leitor) status('Permita a abertura de janelas para fotografar a etiqueta.', 'err');
 }
 
-// RECEBER DADOS EXTRAÍDOS DA ETIQUETA PELO OCR
+// RECEBER AS DUAS LEITURAS DO LEITOR OCR
 window.addEventListener('message', function(event) {
   if (event.origin !== 'https://manutencaoamevotu-dev.github.io') return;
-  const dados = event.data;
-  if (!dados || dados.type !== 'OX2_LABEL_OCR') return;
+
+  const dados = event.data || {};
+  if (dados.type !== 'OX2_LABEL_OCR') return;
+
   const item = document.getElementById(dados.target || '');
+  const reply = (success, message) => {
+    try {
+      event.source?.postMessage({
+        type: 'OX2_LABEL_OCR_ACK',
+        target: dados.target,
+        success,
+        message
+      }, event.origin);
+    } catch (error) {}
+  };
+
   if (!item || !item.classList.contains('received')) {
-    status('Não foi possível localizar o cilindro correspondente.', 'err');
+    reply(false, 'Linha do recebimento não encontrada.');
+    status('Não foi possível localizar a linha do cilindro correspondente.', 'err');
     return;
   }
-  const product = item.querySelector('[data-f="productCode"]');
-  const lot = item.querySelector('[data-f="lot"]');
-  const date = item.querySelector('[data-f="labelDate"]');
-  if (product && dados.productCode) {
-    const option = [...product.options].find(o => o.value === dados.productCode);
-    if (option) product.value = dados.productCode;
+
+  const get = name => item.querySelector('[data-f="' + name + '"]');
+  const fields = {
+    productCode: get('productCode'),
+    lot: get('lot'),
+    labelDate: get('labelDate'),
+    productBarcode: get('productBarcode'),
+    displayNumber: get('displayNumber'),
+    barcode: get('barcode')
+  };
+  const applied = [];
+  const missing = [];
+
+  if (dados.productCode && fields.productCode) {
+    const normalized = String(dados.productCode).replace(/\\s/g, '');
+    const option = [...fields.productCode.options].find(
+      option => option.value.replace(/\\s/g, '') === normalized
+    );
+    if (option) {
+      fields.productCode.value = option.value;
+      applied.push('produto');
+    } else {
+      missing.push('produto não encontrado na lista');
+    }
   }
-  if (lot && dados.lot) lot.value = dados.lot;
-  if (date && dados.labelDate) date.value = dados.labelDate;
-  [product, lot, date].filter(Boolean).forEach(field => {
+  if (dados.lot && fields.lot) {
+    fields.lot.value = String(dados.lot).trim();
+    applied.push('lote');
+  }
+  if (dados.labelDate && fields.labelDate) {
+    fields.labelDate.value = String(dados.labelDate).trim();
+    applied.push('data da etiqueta');
+  }
+  if (dados.productBarcode && fields.productBarcode) {
+    fields.productBarcode.value = String(dados.productBarcode).trim();
+    applied.push('código de barras do produto');
+  }
+  if (dados.cylinderNumber && fields.displayNumber) {
+    fields.displayNumber.value = String(dados.cylinderNumber).trim();
+    applied.push('identificação individual do cilindro');
+  }
+  if (dados.cylinderBarcode && fields.barcode) {
+    fields.barcode.value = String(dados.cylinderBarcode).trim();
+    applied.push('código de barras individual');
+  }
+
+  Object.values(fields).filter(Boolean).forEach(field => {
     field.dispatchEvent(new Event('input', {bubbles:true}));
     field.dispatchEvent(new Event('change', {bubbles:true}));
   });
-  const parts = [];
-  if (dados.productCode) parts.push('produto ' + dados.productCode);
-  if (dados.lot) parts.push('lote ' + dados.lot);
-  if (dados.labelDate) parts.push('data ' + dados.labelDate);
-  status(parts.length ? 'Dados da etiqueta recebidos: ' + parts.join('; ') + '. Confira os campos.' : 'OCR recebido, mas nenhum campo foi identificado. Preencha manualmente.', parts.length ? 'ok' : 'err');
+
+  const success = applied.length > 0;
+  const message = success
+    ? 'Campos preenchidos: ' + applied.join(', ') + (missing.length ? '. Atenção: ' + missing.join(', ') : '')
+    : 'Nenhum campo foi reconhecido. Complete manualmente no recebimento.';
+
+  reply(success, message);
+  status(
+    success ? 'Duas leituras recebidas. ' + message + '. Confira os dados antes de registrar.' : message,
+    success ? 'ok' : 'err'
+  );
 });
 
 // RECEBER O CÓDIGO DO LEITOR EXTERNO
