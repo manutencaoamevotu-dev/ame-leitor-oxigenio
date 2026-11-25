@@ -301,7 +301,7 @@ function extractIndividualNumber(text) {
 
   // Códigos 2455/... identificam o tipo do produto. Retira esse padrão
   // antes de procurar o número individual do cilindro.
-  const source = original.replace(/\\b2455\\s*\\/\\s*[\\d \\t.,;:_-]+/gi, ' ');
+  const source = original.replace(/\b2455\s*\/\s*[\d \t.,;:_-]+/gi, ' ');
 
   const lines = source
     .split(/\r?\n/)
